@@ -1,6 +1,6 @@
 # Anime Wiki
 
-A modern anime wiki built with **React + TypeScript + Vite** on the frontend and a thin **Express** API on the backend, deployed on **Vercel** at <https://animewiki.vercel.app>.
+A modern anime wiki built with **React + TypeScript + Vite** on the frontend and a thin **Express** API on the backend, deployed on **Vercel** at <https://animewiki.eu.cc>.
 
 > Licensed under the [MIT License](./LICENSE).
 
@@ -160,7 +160,7 @@ LIBRETRANSLATE_API_KEY=...
 VITE_HCAPTCHA_SITE_KEY=...
 
 # Anti-bot SEO override
-SITE_URL=https://animewiki.vercel.app
+SITE_URL=https://animewiki.eu.cc
 
 # Admin daily-password rotation (cron + Discord webhook)
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGc…       # service role from Supabase project settings
