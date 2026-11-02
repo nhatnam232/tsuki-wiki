@@ -12,6 +12,7 @@
 | API | `https://api.animewiki.eu.cc/api` (baked trong bundle, 2 hit) |
 | Dữ liệu lúc cutover | **4 user · 2 comments · 4 favorites · 2 library** |
 | Verify | 6 route chính 200; **40 lazy chunk** không còn `hcaptcha`/`supabase`; SDK symbols = 0; CORS preflight `Origin: https://animewiki.eu.cc` → **204** ACAO đúng + credentials; `health` 200 `{db:true}`; CSRF: login Origin mới → 401 `invalid_credentials` (được chấp nhận), Origin `https://evil.example` → **403 `csrf_origin_rejected`** |
+| Content API | ⚠️ **Thiếu lúc 12:24** → mọi trang nội dung báo “Unable to load data”; **fix `c9c108f`** port 9 route (`/api/anime`, `/anime/featured`, `/anime/:id`, `/character`, `/character/:id`, `/studio/:id`, `/search`, `/search/filters`, `/season`, `/schedule`, `/image`, `/translate`, `/wiki-import`) + 4 lib từ `server/` |
 | **Rollback** | Vercel → Deployments → **promote deployment trước cutover** (bundle `index-DOKDDPZJ.js`); backend giữ nguyên `server-v2`; KHÔNG rollback về `deploy/bundle/server.cjs` (Supabase cũ đã ngừng) |
 | Trạng thái gate | **GO** — G1–G12 xanh; G13 (browser render smoke) **manual, chưa verify** |
 
@@ -31,7 +32,8 @@
 | G10 | **Google OAuth production** | ✅ **PASS (11:25)** — sir login Google thật trên production: user `kobitnx223@gmail.com`, `provider=google`, `username=jades`, `badges=["admin"]`, `last_login_at=2026-11-02T11:25:51.349Z`; tạo **1 session** lúc `11:25:51.355Z`, `revoked_at=null`, redirect về `https://animewiki.eu.cc/`. `/api/auth/google/start` giờ trả **302** (client_id/redirect_uri/scope/PKCE S256 đúng, không `redirect_uri_mismatch`; trước đó 503). **Không còn là blocker** |
 | G11 | **Captcha/bot defence** | ✅ **DONE (12:24 — bundle live sạch)** — live main **`index-C9V0MWsi.js`** (≠ `index-DOKDDPZJ.js`), `hcaptcha` = **0** (main + 36 chunk lazy), `js.hcaptcha.com` = **0**; backend `CAPTCHA_DISABLED=1`; CF rule `/api/auth/*` 10 req/10s/IP. **CSRF origin guard verified:** login `Origin: https://animewiki.eu.cc` → 401 `invalid_credentials` (được chấp nhận), `Origin: https://evil.example` → **403 `csrf_origin_rejected`** ⇒ allowlist đã cập nhật domain mới; thiếu bước này toàn bộ login từ site sẽ 403 |
 | G12 | **Bot Fight Mode (Cloudflare)** | ⏳ **MANUAL — không chặn cutover** — API token thiếu scope (`10405 Method not allowed`); sir vào dashboard Cloudflare → Security → Bots → bật **Bot Fight Mode**. Ghi nhận là hardening sau cutover |
-| G13 | **Browser render smoke (manual)** | ⏳ **CHƯA VERIFY** — cần mở browser thật: `/profile`, trang anime (CommentSection), `/collections`, `/admin`; kỳ vọng không throw `[supabase] đã bị loại bỏ`, comment load 2 author, vote/collect hoạt động. Máy tester không có Playwright/Puppeteer nên chỉ verify được chunk + API 200. **Không chặn kỹ thuật nhưng nên làm trước khi mời user thật** |
+| G13 | **Browser render + content API smoke** | ✅ **FIXED (12:3x, `c9c108f`)** — lúc 12:24 **FAIL thật**: mọi trang nội dung báo “Unable to load data” vì server-v2 chưa port content routes (chỉ có ở backend Vercel cũ). Sau fix verify live: `/api/anime?limit=6` **200** (8.6KB data thật), `/anime/featured` 200, `/anime/21` 200 (21.6KB), `/search?q=frieren` 200, `/season` 200 (43KB), `/schedule` 200 (44KB), `/character/1` 200, `/studio/1` 200 (31.6KB), `POST /translate` 200, `/wiki-import/summary?slug=naruto` 200. **DOM vẫn chưa verify bằng browser** (không Playwright) — nhưng API mà các trang gọi đã 200 |
+| G14 | **`/api/wiki-import/sections` (import Wikipedia)** | ❌ **CHẾT — lỗi có sẵn từ backend cũ (12:3x)** — prod `sections?slug=Naruto` → **404 `Wikipedia article not found`** với Naruto/One_Piece/Attack_on_Titan. Root cause: code gọi `.../api/rest_v1/page/mobile-sections/<slug>` (`server-v2/content/wiki-import.ts:77`) — upstream Wikimedia trả **403** với mọi UA; **không phải regression port** (backend cũ `0fb07b3:server/routes/wiki-import.ts:77` y hệt). **Fix gợi ý:** dùng `action=parse&prop=sections` (`w/api.php`, verify 200 — 29 sections) + `action=parse&section=<id>` lấy text, hoặc `rest_v1/page/mobile-html`; sửa `content/wiki-import.ts:74-82`. Ảnh hưởng: WikiNew/WikiEdit import hỏng ở bước sections (summary vẫn chạy). |
 
 ### G11 — Runbook bật lại captcha sau này (hiện đã tắt theo quyết định B)
 
@@ -53,7 +55,7 @@
 5. **Login browser thật 1 lần** (giải captcha) → phải 200 + cookie; nếu `captcha_failed` toàn bộ ⇒ secret sai account.
 6. **Rollback nếu sai:** **thêm `CAPTCHA_DISABLED=1` VÀ xoá `HCAPTCHA_SECRET` cùng lúc**, rồi restart **một lần** (captcha tắt, site sống). **Thứ tự bắt buộc:** không xoá secret trước khi có cờ — production thiếu secret mà chưa có cờ ⇒ `assertCaptchaConfigured` **throw lúc boot** ⇒ crash-loop/site sập; đặt cờ trước rồi xoá secret trong cùng lần thay đổi là an toàn. **Ngữ nghĩa cố ý giữ nguyên: `HCAPTCHA_SECRET` thắng `CAPTCHA_DISABLED`** — `verifyCaptcha` **không** đọc cờ (secret check chạy trước ở `assertCaptchaConfigured`, xem `captcha.ts:31-32,44`); đừng “sửa” code để cờ short-circuit, vì sẽ tái tạo đúng lỗi “tưởng tắt mà vẫn bật”. Khuyến nghị thêm comment trong `verifyCaptcha`: “cố ý KHÔNG đọc CAPTCHA_DISABLED — secret thắng cờ”.
 
-> **GO — cutover đã chạy 12:24.** G1–G12 xanh; chỉ còn **G13 browser render smoke** (manual) nên chạy trước khi mời user thật. G1/G3/G5/G6/G7/G8/G9/G10 đã xanh; G11 **resolved-by-decision nhưng chờ deploy frontend** (`cde5963` + Cloudflare edge); G9 hardening done (`f430123`), G10 Google OAuth verified thật (11:25). Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
+> **GO CÓ ĐIỀU KIỆN — cutover 12:24 FAIL content API (fix `c9c108f`); G14 wiki-import/sections vẫn mở (bug có sẵn, không chặn trang chính).** Sau `c9c108f` G1–G13 xanh; còn **DOM render chưa verify bằng browser** (G13 manual) và các tồn đọng minor. G1/G3/G5/G6/G7/G8/G9/G10 đã xanh; G11 **resolved-by-decision nhưng chờ deploy frontend** (`cde5963` + Cloudflare edge); G9 hardening done (`f430123`), G10 Google OAuth verified thật (11:25). Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
 >
 > **Phương án tạm nếu TLS chưa xong (phải chốt bằng văn bản):** chỉ dùng `IP:port` + `COOKIE_SECURE=false` trong **LAN/test nội bộ**, tuyệt đối không mời user thật và không gọi đó là production. Ghi rõ ngày hết hạn của phương án tạm và người chịu trách nhiệm.
 
@@ -147,15 +149,24 @@ Checklist thủ công (browser):
 - [ ] DevTools: không còn request tới `*.supabase.co`; cookie có `HttpOnly; Secure; SameSite=Lax`.
 - [ ] Kiểm 5 view: activity feed phân trang, genres cho recommendations, comment counts, library stats của chính mình.
 
+## 4a. Bài học cutover (quan trọng)
+
+- **Phải verify MỌI route frontend gọi, không chỉ route DB.** AUTHZ-MATRIX 73 policy chỉ phủ bảng/authorization; **content API** (`src/lib/api.ts`: `/anime`, `/season`, `/schedule`, `/character`, `/studio`, `/search`, `/image`, `/translate`, `/wiki-import`, `/ws`) không nằm trong matrix nên bị bỏ sót → cutover 12:24 “xanh” trên giấy nhưng **mọi trang nội dung chết**.
+- **Checklist trước cutover bổ sung:** `grep -rhoE "fetch(Json|\()?'?/api/[a-z-]+" src/lib/api.ts src/` đối chiếu với route thật của `server-v2` (hoặc curl từng path); smoke 1 trang mỗi loại (Home, anime detail, character, studio, search, season, schedule, wiki) **trước khi** tuyên bố GO.
+- **Gate G13 phải là smoke thật** (curl + browser), không chỉ “chunk tải được”.
+- **Phải verify cả hành vi phụ thuộc bên thứ 3** (Wikipedia/AniList/DeepL/upstream proxy) chứ không chỉ route trả 200: `/api/wiki-import/sections` sống về route nhưng chết vì Wikipedia bỏ `mobile-sections` (403) — lỗi có sẵn từ backend cũ, chỉ lộ khi test sâu. Xem G14.
+
 ## 4b. Sau cutover (post-cutover backlog)
 
-1. **Dọn backend cũ:** xoá `server/`, `api/`, `deploy/bundle/` (Supabase cũ) sau khi xác nhận 24h không cần rollback; cập nhật `vercel.json`/`package.json` tương ứng.
+1. **Dọn backend cũ:** content routes đã port xong (`c9c108f`) nên **xoá `server/`, `api/`, `deploy/bundle/` giờ an toàn hơn**; `server/routes/admin.ts` + `server/lib/translate.ts` là bản cũ không còn cần. Vẫn nên giữ 24h để rollback rồi mới xoá; cập nhật `vercel.json`/`package.json`.
 2. **Bỏ dep `@supabase/supabase-js`** khỏi `package.json` + lockfile (cosmetic, không vào bundle).
 3. **Vercel:** xoá cron `/api/admin/rotate-password` (nếu chuyển cron sang Cloudflare/panel) và các env Supabase cũ (`VITE_SUPABASE_*`, `SUPABASE_*`).
 4. **Supabase:** giữ project **read-only + backup tối thiểu 30 ngày**, sau đó mới quyết định xoá.
 5. **Giám sát 24h:** theo dõi `data/crash.log` (commit `b644637` log crash reason), error rate, login fail, WS. **Đối chiếu timestamp** với 2 mốc deploy **12:03** và **12:13–12:14** (CF 502/530, origin refused, tự hồi) để loại trừ restart-do-deploy trước khi kết luận crash thật; nếu có entry quanh 2 mốc, gửi tester (report + request cuối: DELETE collection 12:03 / register 12:13:5x) để đối chiếu. Báo cáo gốc: `/tmp/opencode/audit-logs/task10-report.md`, `tester-report.md`.
 6. **G12 (manual):** bật Bot Fight Mode trên Cloudflare dashboard.
-7. Tồn đọng minor: 6 policy mod ALLOW (chưa test được), 11 storage policy (Phase 2), #1 profiles_read_all, 7 route chưa có, **rotate trả plaintext (P2, Lead giữ có chủ đích vì chưa có webhook)**.
+7. **Fix G14 — wiki-import sections:** đổi sang `action=parse&prop=sections` hoặc `mobile-html`, test `lang=en/vi`; đây là bug có sẵn từ backend cũ, không phải regression.
+8. **`/api/schedule` trả `data:[]`** (route sống): cần xác nhận upstream AniList/Jikan có lịch tuần 2026-11-02..09 hay filter sai.
+9. Tồn đọng minor: 6 policy mod ALLOW (chưa test được), 11 storage policy (Phase 2), #1 profiles_read_all, 7 route chưa có, **rotate trả plaintext (P2, Lead giữ có chủ đích vì chưa có webhook)**.
 
 ## 5. Rollback từng bước
 

@@ -36,8 +36,9 @@
 | `b644637` | fix(server): log crash reason before exiting |
 | `c80cb8f` | feat(api): close the last matrix route gaps |
 | `0fb07b3` | chore(web): drop the unused ShieldCheck import left over from the captcha removal |
+| `c9c108f` | feat(server-v2): port the AniList/Jikan content API (fix cutover partial failure) |
 
-`main` **đã push** — `origin/main` = HEAD `0fb07b3` (26 commit trên nhánh). **CUTOVER ĐÃ CHẠY 12:24 (2026-11-02)**: commit `0fb07b3` pushed (26 commit), Vercel production READY, live `index-C9V0MWsi.js`, hcaptcha 0, supabase SDK 0, CSRF origin mới OK / origin lạ 403. Sau cutover: xoá `server/`/`api/`/`deploy/bundle`, bỏ dep `@supabase/supabase-js`, xoá cron Vercel + env Supabase, giữ Supabase backup 30 ngày, giám sát `data/crash.log` 24h, G12 manual. Còn **G13 render smoke** (manual). `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **đã push** — `origin/main` = HEAD `0fb07b3` (26 commit trên nhánh). **CUTOVER 12:24 (2026-11-02)** commit `0fb07b3` pushed, Vercel production READY, live `index-C9V0MWsi.js`, hcaptcha 0, SDK 0, CSRF OK — **nhưng FAIL content API** (trang nội dung “Unable to load data”); **fix `c9c108f` port 9 route content**, verify live 9 endpoint 200. **Bài học:** cutover checklist phải verify mọi route `src/lib/api.ts`, không chỉ 73 policy DB — **và phải test sâu hành vi phụ thuộc bên thứ 3** (Wikipedia/AniList/DeepL): `/api/wiki-import/sections` sống route nhưng chết vì upstream 403 (G14). Sau cutover: xoá `server/`/`api/`/`deploy/bundle`, bỏ dep `@supabase/supabase-js`, xoá cron Vercel + env Supabase, giữ Supabase backup 30 ngày, giám sát `data/crash.log` 24h, G12 manual. Còn **G13 render smoke** (manual). `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -237,7 +238,8 @@ node --test test/ws-client.test.ts    # dùng package `ws` (Phase 2 được duy
 1. `scripts/migrate-supabase.mjs`: đọc Supabase **read-only** (service role, `--dry-run` mặc định), xuất JSON snapshot; import vào SQLite theo thứ tự FK; `--apply` mới ghi; idempotent (`UPSERT` theo PK).
 2. Mapping kiểu: uuid→TEXT, timestamptz→ISO UTC, jsonb/text[]→JSON text, boolean→0/1; `auth.users` → `users` (giữ `id`, email; password Supabase không migrate được → user phải reset mật khẩu hoặc dùng Google).
 3. Kiểm chứng: script so sánh `count(*)` từng bảng (Supabase vs SQLite), checksum 3 cột định danh, báo cáo lệch. **G3 DONE (11:55)** trên bản copy: `insert 0/skip 4-6`, counts `users 4 · profiles 4 · favorites 4 · library 2 · comments 2 · quests 6`, FK check rỗng, exit 0.
-4. Cutover frontend: **0 file import shim** ✅; đã xoá shim + bỏ `manualChunks`; **live bundle sạch chunk `supabase-*` và SDK symbols = 0** ✅. **Còn cosmetic:** bỏ dep `@supabase/supabase-js` (`package.json:19`) + vài chuỗi UI “Supabase is not configured”; **render DOM chưa verify** (G13 manual).
+4. **Trước khi GO phải smoke toàn bộ content API** (`/api/anime`, `/season`, `/schedule`, `/character`, `/studio`, `/search`, `/image`, `/translate`, `/wiki-import`) — matrix 73 policy không phủ các route này (bài học từ cutover 12:24).
+5. Cutover frontend: **0 file import shim** ✅; đã xoá shim + bỏ `manualChunks`; **live bundle sạch chunk `supabase-*` và SDK symbols = 0** ✅. **Còn cosmetic:** bỏ dep `@supabase/supabase-js` (`package.json:19`) + vài chuỗi UI “Supabase is not configured”; **render DOM chưa verify** (G13 manual).
 5. **Gỡ Supabase phía server** (2 file còn lại): `server/lib/translate.ts`, `server/routes/admin.ts` (đã port ở Phase 1), `server/lib/`/`server/routes/` còn lại, `api/index.ts`, `scripts/prerender.ts`, `vercel.json` — quyết định xoá `server/`+`api/` hay trỏ Vercel sang `server-v2`. Kiểm: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng.
 6. Feature flag `VITE_BACKEND=supabase|v2` để rollback tức thời; runbook cutover + rollback trong `docs/migration/CUTOVER.md`.
 7. Backup: copy `data/app.db` + WAL trước mỗi lần import; giữ bản Supabase read-only ít nhất 30 ngày.
@@ -270,12 +272,13 @@ npm run check && npm run lint && npm run build
 
 ### Phase 3b — Sau cutover
 
-- [ ] Xoá backend cũ `server/`, `api/`, `deploy/bundle/` + cập nhật `vercel.json`/`package.json`.
+- [ ] Xoá backend cũ `server/`, `api/`, `deploy/bundle/` + cập nhật `vercel.json`/`package.json` — **content routes đã port `c9c108f`** nên an toàn hơn; vẫn giữ 24h để rollback.
 - [ ] Bỏ dep `@supabase/supabase-js` + lockfile; dọn chuỗi UI “Supabase is not configured”.
 - [ ] Xoá cron Vercel `/api/admin/rotate-password` + env Supabase trên Vercel.
 - [ ] Supabase read-only + backup 30 ngày trước khi xoá project.
 - [ ] Giám sát 24h `data/crash.log`, error rate, login fail, WS; **đối chiếu timestamp với 2 blip deploy 12:03 và 12:13–12:14** để loại trừ restart-do-deploy trước khi kết luận crash (gửi tester nếu có entry).
 - [ ] G12 Bot Fight Mode (manual, sir) + G13 browser render smoke.
+- [ ] **G14:** fix `/api/wiki-import/sections` (Wikipedia bỏ `mobile-sections` → 403; dùng `action=parse&prop=sections`), test `lang=en/vi`; `/api/schedule` trả `data:[]` cần xác nhận upstream.
 
 ## Thứ tự giao việc & gate
 
