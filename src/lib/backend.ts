@@ -1,7 +1,7 @@
 /**
  * Client for the self-hosted backend (server-v2).
  *
- * Replaces `@supabase/supabase-js` for data/auth/storage/realtime. Every call
+ * Replaces the legacy hosted backend client for data/auth/storage/realtime.
  * carries the HttpOnly session cookies (`credentials: 'include'`), so no token
  * ever touches frontend JS.
  *
@@ -12,6 +12,9 @@
 const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '/api'
 const MEDIA_BASE = API_BASE.replace(/\/api$/, '')
+
+/** Backend tự viết đã sẵn sàng (Supabase đã bị loại bỏ). */
+export const API_READY = true
 
 export class ApiError extends Error {
   status: number
@@ -404,4 +407,19 @@ export const connectRealtime = (
     if (timer) clearTimeout(timer)
     socket?.close()
   }
+}
+
+
+/* ── admin (thay supabase.rpc) ────────────────────────────────────── */
+
+export const admin = {
+  verifyPassword: (password: string) =>
+    post<{ success: boolean; valid: boolean; validForDate: string }>('/admin/verify-password', {
+      password,
+    }),
+  rotatePassword: () =>
+    post<{ success: boolean; rotated?: boolean; password?: string; warning?: string; webhook_sent?: boolean }>(
+      '/admin/rotate-password',
+      {},
+    ),
 }

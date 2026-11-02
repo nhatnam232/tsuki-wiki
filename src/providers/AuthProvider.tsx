@@ -7,8 +7,20 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { Session, User } from '@supabase/supabase-js'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+// Type tối thiểu thay cho client Supabase cũ (đã loại bỏ).
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export type SessionUser = {
+  id: string
+  email?: string | null
+  created_at?: string
+  last_sign_in_at?: string | null
+  user_metadata?: Record<string, any>
+  app_metadata?: Record<string, any>
+  [key: string]: any
+}
+export type Session = { user: SessionUser } | null
+type User = SessionUser
+import { API_READY, auth as authApi, profiles as profilesApi, uploadMedia } from '@/lib/backend'
 
 export type Profile = {
   id: string
@@ -66,41 +78,20 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-async function fetchProfile(userId: string): Promise<Profile | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select(
-      'id, username, display_name, avatar_url, cover_url, gender, birthday, spotify_url, bio, created_at, badges, comments_count, library_count, reviews_count',
-    )
-    .eq('id', userId)
-    .maybeSingle()
-
-
-  if (error) {
-    console.warn('[auth] fetchProfile failed', error.message)
+async function fetchProfile(_userId: string): Promise<Profile | null> {
+  try {
+    const res = await profilesApi.me()
+    return (res.profile as unknown as Profile) ?? null
+  } catch {
     return null
   }
-  return (data as Profile) ?? null
 }
 
-async function ensureProfileRow(user: User) {
-  const { error } = await supabase.from('profiles').upsert(
-    {
-      id: user.id,
-      display_name:
-        user.user_metadata?.full_name ||
-        user.user_metadata?.name ||
-        user.email?.split('@')[0] ||
-        'User',
-      avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
-      username: user.email?.split('@')[0] || null,
-    },
-    { onConflict: 'id', ignoreDuplicates: true },
-  )
+async function ensureProfileRow(_user: User) {
+  // server-v2 tạo profiles row ngay trong register/OAuth callback → không cần upsert.
+  return
+  void _user
 
-  if (error) {
-    console.warn('[auth] ensureProfileRow failed', error.message)
-  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -121,77 +112,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [session?.user])
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!API_READY) {
       setLoading(false)
       return
     }
 
     let cancelled = false
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (cancelled) return
-
-      setSession(data.session)
-
-      if (data.session?.user) {
-        await ensureProfileRow(data.session.user)
-        const nextProfile = await fetchProfile(data.session.user.id)
-        if (!cancelled) setProfile(nextProfile)
+    void (async () => {
+      try {
+        const me = await authApi.me()
+        if (cancelled) return
+        setSession(me as never)
+        setProfile((me as unknown as { profile: Profile | null }).profile ?? null)
+      } catch {
+        // access token hết hạn → thử refresh (refresh cookie path /api/auth)
+        try {
+          const refreshed = await authApi.refresh()
+          if (!cancelled) setSession(refreshed as never)
+        } catch {
+          if (!cancelled) { setSession(null); setProfile(null) }
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-
-      if (!cancelled) setLoading(false)
-    })
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
-      setSession(next)
-
-      if (next?.user) {
-        void ensureProfileRow(next.user)
-          .then(() => fetchProfile(next.user.id))
-          .then((nextProfile) => setProfile(nextProfile))
-      } else {
-        setProfile(null)
-      }
-    })
+    })()
 
     return () => {
       cancelled = true
-      sub.subscription.unsubscribe()
     }
+
   }, [])
 
   const signInWithGoogle = useCallback(async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    })
+    window.location.href = authApi.googleStartUrl()
   }, [])
 
   const signInWithEmail = useCallback(async (email: string, password: string, captchaToken?: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-      options: captchaToken ? { captchaToken } : undefined,
-    })
-    return { error: error?.message }
+    void captchaToken
+    try {
+      await authApi.login(email, password)
+      return {}
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'login_failed' }
+    }
   }, [])
 
   const signUpWithEmail = useCallback(
     async (email: string, password: string, displayName?: string, captchaToken?: string) => {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-          captchaToken,
-          data: displayName ? { full_name: displayName } : undefined,
-        },
-      })
-
-      if (error) return { error: error.message }
-      return { needsConfirmation: !data.session }
+      void displayName
+      try {
+        await authApi.register(email, password, email.split('@')[0] ?? 'user')
+        return { needsConfirmation: false }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : 'register_failed' }
+      }
     },
     [],
   )
@@ -211,30 +186,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = session?.user
       if (!currentUser) return { error: 'You need to sign in first.' }
 
-      // Use upsert so we also create the row if handle_new_user trigger hasn't run yet.
-      const { error } = await supabase
-        .from('profiles')
-        .upsert(
-          {
-            id: currentUser.id,
-            ...updates,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'id' },
-        )
-
-      if (error) return { error: error.message }
-
-      const { error: authError } = await supabase.auth.updateUser({
-        data: {
-          full_name: updates.display_name ?? profile?.display_name ?? undefined,
-          avatar_url: updates.avatar_url ?? profile?.avatar_url ?? undefined,
-        },
-      })
-
-      if (authError) {
-        console.warn('[auth] updateUser metadata failed', authError.message)
+      try {
+        await profilesApi.updateMe(updates as never)
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : 'update_failed' }
       }
+
 
       await refreshProfile()
       return {}
@@ -249,21 +206,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!file.type.startsWith('image/')) return { error: 'Please choose an image file.' }
       if (file.size > 2 * 1024 * 1024) return { error: 'Avatar must be 2 MB or smaller.' }
 
-      const extension = file.name.split('.').pop()?.toLowerCase() || 'png'
-      const safeExtension = extension.replace(/[^a-z0-9]/g, '') || 'png'
-      // Keep path under the user's folder so the avatars_insert_own RLS policy allows it.
-      const filePath = `${currentUser.id}/avatar-${Date.now()}.${safeExtension}`
 
-      const { error } = await supabase.storage.from('avatars').upload(filePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: file.type || `image/${safeExtension}`,
-      })
-
-      if (error) return { error: error.message }
-
-      const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
-      const url = data.publicUrl
+      let url: string
+      try {
+        url = await uploadMedia('avatars', file)
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : 'Upload failed' }
+      }
       const updateResult = await updateProfile({ avatar_url: url })
       if (updateResult.error) return updateResult
 
@@ -283,20 +232,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!file.type.startsWith('image/')) return { error: 'Please choose an image file.' }
       if (file.size > 5 * 1024 * 1024) return { error: 'Cover must be 5 MB or smaller.' }
 
-      const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-      const safeExtension = extension.replace(/[^a-z0-9]/g, '') || 'jpg'
-      const filePath = `${currentUser.id}/cover-${Date.now()}.${safeExtension}`
 
-      const { error } = await supabase.storage.from('covers').upload(filePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: file.type || `image/${safeExtension}`,
-      })
-
-      if (error) return { error: error.message }
-
-      const { data } = supabase.storage.from('covers').getPublicUrl(filePath)
-      const url = data.publicUrl
+      let url: string
+      try {
+        url = await uploadMedia('covers', file)
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : 'Upload failed' }
+      }
       const updateResult = await updateProfile({ cover_url: url })
       if (updateResult.error) return updateResult
 
@@ -315,7 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof document !== 'undefined') {
       document.documentElement.classList.add('is-signing-out')
     }
-    await supabase.auth.signOut()
+    await authApi.logout()
     setProfile(null)
     // Tiny delay to let the fade animation breathe, then hard-reload to wipe
     // any lingering React Query cache, ToS modal state, etc.
@@ -333,7 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       profile,
       loading,
-      configured: isSupabaseConfigured,
+      configured: API_READY,
       signInWithGoogle,
       signInWithEmail,
       signUpWithEmail,

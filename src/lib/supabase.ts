@@ -1,25 +1,28 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+/**
+ * DEPRECATED — Supabase đã bị loại bỏ (backend tự viết: server-v2).
+ *
+ * File này chỉ còn để các module chưa migrate không vỡ `import`. Mọi thứ thật
+ * nằm ở `src/lib/backend.ts`. `supabase` bên dưới là shim NÉM LỖI khi dùng,
+ * để lỗi lộ ra ngay thay vì im lặng gọi dịch vụ không tồn tại.
+ *
+ * ĐỢT SAU cần migrate (còn import `supabase`):
+ *   SuggestEditModal, RecommendedForYou, AddToLibraryButton, CommentSection,
+ *   QuestsPanel, NotificationsProvider, useAnimeLike, PersonalLibrary,
+ *   AdminDashboard, ActivityFeed, CollectionsPage, Profile.
+ */
+export { ApiError, auth, profiles, mediaUrl, uploadMedia, library, favorites, comments, collections, reactions, reviews, notifications, editSuggestions, compareHistory, quests, activity, connectRealtime, BUCKETS } from './backend'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-export const isSupabaseConfigured = Boolean(url && anonKey)
-
-if (!isSupabaseConfigured && import.meta.env.DEV) {
-  console.warn(
-    '[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are missing - auth + comments + likes will be disabled.',
-  )
-}
-
-// Fallback to safe dummies so the app still renders even without env vars.
-export const supabase: SupabaseClient = createClient(
-  url || 'https://placeholder.supabase.co',
-  anonKey || 'placeholder-anon-key',
+/** @deprecated Supabase client không còn tồn tại. */
+export const supabase = new Proxy(
+  {},
   {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+    get(_target, prop) {
+      throw new Error(
+        `[supabase] đã bị loại bỏ — thay "${String(prop)}" bằng helper trong @/lib/backend`,
+      )
     },
   },
-)
+) as any // eslint-disable-line @typescript-eslint/no-explicit-any
+
+/** @deprecated luôn false: backend mới không dùng Supabase. */
+export const isSupabaseConfigured = false

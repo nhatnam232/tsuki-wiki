@@ -1,20 +1,17 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
 import { useLangContext } from '@/providers/LangProvider'
 
+/**
+ * Google OAuth callback: server-v2 đã exchange code, tạo session và set cookie
+ * HttpOnly trước khi redirect về đây → frontend không cần xử lý gì.
+ */
 export default function AuthCallback() {
   const { t } = useLangContext()
   const navigate = useNavigate()
 
   useEffect(() => {
-    let cancelled = false
-    supabase.auth.getSession().then(() => {
-      if (!cancelled) navigate('/', { replace: true })
-    })
-    return () => {
-      cancelled = true
-    }
+    navigate('/', { replace: true })
   }, [navigate])
 
   return (

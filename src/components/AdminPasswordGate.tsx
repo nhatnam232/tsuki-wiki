@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Copy, KeyRound, Loader2, Lock, ShieldCheck } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { admin } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { isAdmin, isModerator } from '@/lib/badges'
@@ -88,13 +88,13 @@ export default function AdminPasswordGate({ children }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!supabase) return
+    // backend tự viết luôn sẵn sàng
+
     setError(null)
     setLoading(true)
     try {
-      const { data, error } = await supabase.rpc('verify_admin_password', { candidate })
-      if (error) throw error
-      if (data === true) {
+      const result = await admin.verifyPassword(candidate)
+      if (result.valid === true) {
         const today = new Date().toISOString().slice(0, 10)
         try {
           sessionStorage.setItem(
@@ -119,15 +119,13 @@ export default function AdminPasswordGate({ children }: Props) {
   }
 
   const handleGenerate = async () => {
-    if (!supabase) return
     if (!canGenerate) return
     setError(null)
     setGenerating(true)
     try {
-      const { data, error } = await supabase.rpc('rotate_admin_password')
-      if (error) throw error
-      if (typeof data === 'string' && data.length > 0) {
-        setGeneratedPassword(data)
+      const result = await admin.rotatePassword()
+      if (typeof result.password === 'string' && result.password.length > 0) {
+        setGeneratedPassword(result.password)
       } else {
         setError(lang === 'vi' ? 'Không nhận được mật khẩu mới' : 'Did not receive a new password')
       }
