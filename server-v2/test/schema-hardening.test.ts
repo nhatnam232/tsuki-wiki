@@ -272,7 +272,7 @@ test('#4 quest progress atomic: cộng dồn đúng, không lost update', () => 
   }
 });
 
-test('migration: 6 file, chạy 2 lần không throw, 25 trigger, 5 view', () => {
+test('migration: 7 file, chạy 2 lần không throw, 25 trigger, 5 view', () => {
   const dir = mkdtempSync(join(tmpdir(), 'tsuki-mig-'));
   const db = openDb({ path: join(dir, 'app.db') });
   try {
@@ -284,6 +284,7 @@ test('migration: 6 file, chạy 2 lần không throw, 25 trigger, 5 view', () =>
       '004_triggers.sql',
       '005_auth_provider.sql',
       '006_audit_cron_secret.sql',
+      '007_mal_attempts.sql',
     ]);
 
     const second = migrate(db);

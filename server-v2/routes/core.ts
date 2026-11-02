@@ -1,6 +1,14 @@
 /**
  * Phase 1a — REST cho 8 bảng lõi. Ownership LUÔN lấy từ req.auth.userId
  * (không bao giờ đọc user_id từ body/query). Counters do trigger DB lo.
+ *
+ * HỢP ĐỒNG DỮ LIỆU (áp dụng cho MỌI route trong file này):
+ *   - REQUEST: nhận CẢ camelCase và snake_case (`animeId` | `anime_id`,
+ *     `parentId` | `parent_id`, `imageUrl` | `image_url`, `isPublic` | `is_public`,
+ *     `coverImage` | `cover_image`, `currentEpisode` | `current_episode`).
+ *   - RESPONSE: luôn snake_case (đúng cột DB), field JSON (badges, meta, anime_ids)
+ *     đã được parse thành array/object.
+ *   - Không bao giờ nhận `user_id`/`role`/`badges` từ client.
  */
 import express from 'express';
 import type { Request, Response, Router } from 'express';
@@ -166,8 +174,10 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     const body = (req.body ?? {}) as Row;
     const sets: string[] = [];
     const values: unknown[] = [];
-    for (const [key, col] of [['status', 'status'], ['currentEpisode', 'current_episode'], ['score', 'score'], ['notes', 'notes']] as const) {
-      if (body[key] !== undefined) { sets.push(`${col} = ?`); values.push(body[key]); }
+    for (const [key, col, alias] of [['status', 'status', 'status'], ['currentEpisode', 'current_episode', 'current_episode'],
+      ['score', 'score', 'score'], ['notes', 'notes', 'notes']] as const) {
+      const value = body[key] ?? body[alias];
+      if (value !== undefined) { sets.push(`${col} = ?`); values.push(value); }
     }
     if (sets.length === 0) return fail(res, 400, 'no_fields');
     sets.push('updated_at = ?');
@@ -223,9 +233,10 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     }
     const row = db.prepare(`insert into comments (user_id, entity_type, entity_id, parent_id, body, image_url, is_deleted, created_at, updated_at)
       values (?,?,?,?,?,?,0,?,?) returning *`)
-      .get(a?.userId, entityType, entityId, str(body.parentId) ?? null, text, str(body.imageUrl) ?? null, nowIso(), nowIso()) as Row;
+      .get(a?.userId, entityType, entityId, str(body.parentId ?? body.parent_id) ?? null, text,
+        str(body.imageUrl ?? body.image_url) ?? null, nowIso(), nowIso()) as Row;
     safeHook(() => bumpQuestProgress(db, a!.userId, 'comments_posted', 1));
-    const parentId = str(body.parentId);
+    const parentId = str(body.parentId ?? body.parent_id);
     if (parentId) {
       safeHook(() => notifyCommentReply(db, {
         parentId, actorId: a!.userId, commentId: String(row.id),
@@ -330,8 +341,9 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     if (!title || title.length < 3 || title.length > 100) return fail(res, 400, 'invalid_title');
     const row = db.prepare(`insert into collections (user_id, title, description, cover_image, is_public, created_at, updated_at)
       values (?,?,?,?,?,?,?) returning *`)
-      .get(a?.userId, title, str(body.description) ?? null, str(body.coverImage) ?? null,
-        body.isPublic === false ? 0 : 1, nowIso(), nowIso()) as Row;
+      .get(a?.userId, title, str(body.description) ?? null,
+        str(body.coverImage ?? body.cover_image) ?? null,
+        (body.isPublic ?? body.is_public) === false ? 0 : 1, nowIso(), nowIso()) as Row;
     safeHook(() => {
       if (row.is_public === 1) {
         const feed = db.prepare(`insert into activity_feed (user_id, kind, collection_id, meta, is_public, created_at)
@@ -349,9 +361,10 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     const sets: string[] = [];
     const values: unknown[] = [];
     for (const [key, col] of [['title', 'title'], ['description', 'description'], ['coverImage', 'cover_image'], ['isPublic', 'is_public']] as const) {
-      if (body[key] !== undefined) {
+      const value = body[key] ?? body[col]; // alias snake_case
+      if (value !== undefined) {
         sets.push(`${col} = ?`);
-        values.push(key === 'isPublic' ? (body[key] ? 1 : 0) : body[key]);
+        values.push(col === 'is_public' ? (value ? 1 : 0) : value);
       }
     }
     if (sets.length === 0) return fail(res, 400, 'no_fields');

@@ -1,5 +1,6 @@
 /**
  * Phase 1b — 9 bảng còn lại có route (matrix §2).
+ * Hợp đồng: request nhận camelCase + snake_case, response snake_case.
  * translation_cache + mal_sync_jobs: KHÔNG route (service nội bộ).
  */
 import express from 'express';
@@ -106,16 +107,16 @@ export function createExtrasRouter(db: Db): Router {
   r.post('/edit-suggestions', authMw, h((req, res) => {
     const a = req.auth;
     const body = req.body as Row;
-    const animeId = int(body.animeId);
+    const animeId = int(body.animeId ?? body.anime_id);
     const field = str(body.field);
-    const after = body.contentAfter;
+    const after = body.contentAfter ?? body.content_after;
     if (animeId === null || !field || after === undefined) return fail(res, 400, 'invalid_input');
     const trusted = Boolean(a && a.badges.some((b) => TRUSTED.includes(b)));
     const status = trusted ? 'auto_approved' : 'pending';
     const row = db.prepare(`insert into anime_edit_suggestions
       (user_id, anime_id, field, content_before, content_after, reason, status, reviewed_by, reviewed_at, created_at)
       values (?,?,?,?,?,?,?,?,?,?) returning *`)
-      .get(a?.userId, animeId, field, body.contentBefore ?? null, String(after), str(body.reason) ?? null,
+      .get(a?.userId, animeId, field, (body.contentBefore ?? body.content_before) ?? null, String(after), str(body.reason) ?? null,
         status, trusted ? a?.userId : null, trusted ? nowIso() : null, nowIso());
     ok(res, { suggestion: row, autoApproved: trusted }, 201);
   }));
@@ -152,7 +153,7 @@ export function createExtrasRouter(db: Db): Router {
     ok(res, { items: normalizeRows(rows, COMPARE_JSON) });
   }));
   r.post('/compare-history', authMw, h((req, res) => {
-    const raw = (req.body as Row)?.animeIds;
+    const raw = (req.body as Row)?.animeIds ?? (req.body as Row)?.anime_ids;
     if (!Array.isArray(raw) || raw.length < 2 || raw.length > 10 || !raw.every((v) => Number.isInteger(v))) {
       return fail(res, 400, 'invalid_anime_ids');
     }

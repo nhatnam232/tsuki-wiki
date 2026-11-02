@@ -196,3 +196,35 @@ test('quests public + progress self; activity public/self; translation-cache + m
     assert.equal((await req(h.base, '/api/mal-sync')).status, 404);
   } finally { await h.close(); }
 });
+
+test('contract: snake_case và camelCase đều tạo parent reply → có notification', async () => {
+  const h = await harness();
+  try {
+    const b = await login(h.base, 'cB@example.com');
+    const a = await login(h.base, 'cA@example.com');
+    const bId = (h.db.prepare("select id from users where email='cb@example.com'").get() as { id: string }).id;
+
+    const parent = await req(h.base, '/api/comments', { method: 'POST', cookie: b, body: { entityType: 'anime', entity_id: 7, body: 'parent' } });
+    const parentId = ((await j(parent)).comment as { id: string }).id;
+
+    // snake_case
+    const snake = await req(h.base, '/api/comments', {
+      method: 'POST', cookie: a,
+      body: { entity_type: 'anime', entity_id: 7, body: 'snake reply', parent_id: parentId, image_url: null },
+    });
+    assert.equal(snake.status, 201);
+    const snakeComment = (await j(snake)).comment as { parent_id: string | null };
+    assert.equal(snakeComment.parent_id, parentId, 'parent_id snake_case phải được lưu');
+
+    // camelCase
+    const camel = await req(h.base, '/api/comments', {
+      method: 'POST', cookie: a,
+      body: { entityType: 'anime', entityId: 7, body: 'camel reply', parentId },
+    });
+    assert.equal(camel.status, 201);
+    assert.equal(((await j(camel)).comment as { parent_id: string | null }).parent_id, parentId);
+
+    const notes = h.db.prepare('select count(*) c from notifications where user_id = ? and kind = ?').get(bId, 'reply') as { c: number };
+    assert.equal(notes.c, 2, 'cả 2 kiểu payload đều phải tạo notification cho B');
+  } finally { await h.close(); }
+});

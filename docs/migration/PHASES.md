@@ -14,8 +14,10 @@
 | `c9f89cb` | feat(server-v2): self-hosted Node+SQLite backend, migrate data off Supabase |
 | `970b911` | chore(lint): clear no-unused-vars/no-empty errors, fix cancelled flag |
 | `edc3d8d` | fix(admin): remove forgeable cron auth bypass |
+| `8c673f8` | feat(web): typed client cho server-v2 backend (`src/lib/backend.ts`, 407 dòng) |
+| `15097d6` | fix(admin): gate rotate-password trước transaction; target node20; thêm `CUTOVER.md`, `007_mal_attempts.sql`, `services/malWorker.ts` |
 
-`main` **ahead `origin/main` 3 commit**, chưa push. Tại thời điểm planner kiểm (2026-11-02 09:40 UTC) `git status --short` còn **2 dòng M**: `docs/migration/PHASES.md` (planner đang sửa) và `server-v2/test/security-fixes.test.ts` (dev) — nên chưa gọi là “working tree sạch”; kiểm lại trước khi cutover.
+`main` **ahead `origin/main` 5 commit**, chưa push. Tại thời điểm planner kiểm (2026-11-02 09:52 UTC) `git status --short` còn: ` M server-v2/test/schema-hardening.test.ts` + `?? server-v2/test/services.test.ts` (dev đang viết) — chưa gọi là “working tree sạch”; kiểm lại trước cutover. `root npm run lint` lúc này báo **2 error** trong `server-v2/test/services.test.ts` (unused `attachWebSocket`/`closeWebSocket`) — lỗi tạm do dev đang sửa, không phải docs.
 
 ## Tổng quan
 
