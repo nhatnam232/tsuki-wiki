@@ -6,7 +6,6 @@ import {
   Loader2,
   Lock,
   Mail,
-  ShieldCheck,
   Sparkles,
   User as UserIcon,
 } from 'lucide-react'
