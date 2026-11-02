@@ -168,6 +168,8 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     const title = str(body.animeTitle ?? body.anime_title);
     if (animeId === null || !title) return fail(res, 400, 'invalid_input');
     const status = str(body.status) ?? 'plan_to_watch';
+    const STATUSES = ['watching', 'completed', 'plan_to_watch', 'on_hold', 'dropped'];
+    if (!STATUSES.includes(status)) return fail(res, 400, 'invalid_status');
     db.prepare(`insert into user_library (user_id, anime_id, anime_title, anime_cover, anime_episodes,
                  status, current_episode, score, notes, created_at, updated_at)
                 values (?,?,?,?,?,?,?,?,?,?,?)

@@ -207,8 +207,6 @@ export type Translation = {
   continueWithGoogle: string
   orEmail: string
   passwordPlaceholder: string
-  completeCaptcha: string
-  completeCaptchaPrompt: string
   googleSignInFailed: string
   createAccountAction: string
   noAccount: string
@@ -501,8 +499,6 @@ const en: Translation = {
   continueWithGoogle: 'Continue with Google',
   orEmail: 'or email',
   passwordPlaceholder: 'Password (min 6 chars)',
-  completeCaptcha: 'Please complete the hCaptcha check first.',
-  completeCaptchaPrompt: 'Complete the hCaptcha challenge before continuing.',
   googleSignInFailed: 'Google sign-in failed',
   createAccountAction: 'Create account',
   noAccount: 'No account?',
@@ -787,8 +783,6 @@ const vi: Translation = {
   continueWithGoogle: 'Tiếp tục với Google',
   orEmail: 'hoặc email',
   passwordPlaceholder: 'Mật khẩu (tối thiểu 6 ký tự)',
-  completeCaptcha: 'Vui lòng hoàn tất xác minh hCaptcha trước.',
-  completeCaptchaPrompt: 'Hoàn tất thử thách hCaptcha trước khi tiếp tục.',
   googleSignInFailed: 'Đăng nhập Google thất bại',
   createAccountAction: 'Tạo tài khoản',
   noAccount: 'Chưa có tài khoản?',

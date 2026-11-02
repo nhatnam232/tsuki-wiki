@@ -11,7 +11,6 @@ import {
   User as UserIcon,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import HCaptchaWidget from '@/components/HCaptchaWidget'
 import SEO from '@/components/SEO'
 import SocialLinks from '@/components/SocialLinks'
 import { useAuth } from '@/providers/AuthProvider'
@@ -34,7 +33,6 @@ export default function Login() {
   const location = useLocation()
   const { signInWithGoogle, signInWithEmail, signUpWithEmail, configured, user } = useAuth()
   const { t, lang } = useLangContext()
-  const hCaptchaSiteKey = import.meta.env.VITE_HCAPTCHA_SITE_KEY
 
   const params = new URLSearchParams(location.search)
   const initialMode = (params.get('mode') === 'signup' ? 'signup' : 'signin') as Mode
@@ -44,8 +42,6 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
-  const [captchaResetSignal, setCaptchaResetSignal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [emailSent, setEmailSent] = useState(false)
@@ -57,15 +53,9 @@ export default function Login() {
     }
   }, [user, nextPath, navigate])
 
-  const requireCaptcha = !!hCaptchaSiteKey
-  const captchaSolved = !requireCaptcha || !!captchaToken
 
   const handleGoogle = async () => {
     setError(null)
-    if (requireCaptcha && !captchaToken) {
-      setError(t.completeCaptcha)
-      return
-    }
     try {
       setLoading(true)
       await signInWithGoogle()
@@ -80,14 +70,10 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    if (requireCaptcha && !captchaToken) {
-      setError(t.completeCaptcha)
-      return
-    }
     setLoading(true)
     try {
       if (mode === 'signin') {
-        const res = await signInWithEmail(email, password, captchaToken || undefined)
+        const res = await signInWithEmail(email, password)
         if (res.error) setError(res.error)
         else navigate(nextPath, { replace: true })
       } else {
@@ -95,15 +81,12 @@ export default function Login() {
           email,
           password,
           displayName || undefined,
-          captchaToken || undefined,
         )
         if (res.error) setError(res.error)
         else if (res.needsConfirmation) setEmailSent(true)
         else navigate(nextPath, { replace: true })
       }
     } finally {
-      setCaptchaResetSignal((value) => value + 1)
-      setCaptchaToken(null)
       setLoading(false)
     }
   }
@@ -182,27 +165,10 @@ export default function Login() {
                   </div>
                 )}
 
-                {/*
-                  hCaptcha is rendered ONCE at the top of the form and is
-                  required for both Google sign-in and email/password.
-                */}
-                {hCaptchaSiteKey && (
-                  <div className="mb-4 rounded-lg border border-border bg-background p-3">
-                    <div className="mb-2 flex items-center gap-1.5 text-xs text-text-muted">
-                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-                      {t.completeCaptchaPrompt}
-                    </div>
-                    <HCaptchaWidget
-                      siteKey={hCaptchaSiteKey}
-                      onVerify={setCaptchaToken}
-                      resetSignal={captchaResetSignal}
-                    />
-                  </div>
-                )}
 
                 <button
                   onClick={handleGoogle}
-                  disabled={loading || !configured || !captchaSolved}
+                  disabled={loading || !configured}
                   className="mb-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-700 bg-white py-2.5 font-medium text-gray-800 transition hover:bg-gray-100 disabled:opacity-50"
                 >
                   <GoogleIcon className="h-5 w-5" />
@@ -260,7 +226,7 @@ export default function Login() {
 
                   <button
                     type="submit"
-                    disabled={loading || !configured || !captchaSolved}
+                    disabled={loading || !configured}
                     className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2.5 font-medium text-white transition hover:bg-primary-hover disabled:opacity-50"
                   >
                     {loading ? (

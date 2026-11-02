@@ -66,9 +66,19 @@ export function createExtrasRouter(db: Db): Router {
   r.post('/anime/:animeId/reviews', authMw, h((req, res) => {
     const body = str((req.body as Row)?.body);
     if (!body || body.length > 200) return fail(res, 400, 'invalid_body');
-    const row = db.prepare(`insert into anime_reviews (user_id, anime_id, body, is_deleted, created_at, updated_at)
-      values (?,?,?,0,?,?) returning *`).get(req.auth?.userId, req.params.animeId, body, nowIso(), nowIso());
-    ok(res, { review: row }, 201);
+    const existing = db.prepare('select id from anime_reviews where user_id = ? and anime_id = ?')
+      .get(req.auth?.userId, req.params.animeId) as { id: string } | undefined;
+    if (existing) return fail(res, 409, 'review_exists');
+    try {
+      const row = db.prepare(`insert into anime_reviews (user_id, anime_id, body, is_deleted, created_at, updated_at)
+        values (?,?,?,0,?,?) returning *`).get(req.auth?.userId, req.params.animeId, body, nowIso(), nowIso());
+      ok(res, { review: row }, 201);
+    } catch (err) {
+      if (err instanceof Error && /UNIQUE constraint failed/.test(err.message)) {
+        return fail(res, 409, 'review_exists');
+      }
+      throw err;
+    }
   }));
   r.delete('/reviews/:id', authMw, h((req, res) => {
     const row = db.prepare('select user_id from anime_reviews where id = ?').get(req.params.id) as { user_id: string } | undefined;
