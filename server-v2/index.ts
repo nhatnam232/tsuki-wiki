@@ -10,6 +10,31 @@ import { closeDb, currentDbPath, getDb, isWalEnabled } from './db/index';
 import { attachWebSocket, closeWebSocket } from './ws/server';
 import { startMalWorker } from './services/malWorker';
 import { assertCaptchaConfigured } from './auth/captcha';
+import { appendFileSync } from 'node:fs';
+
+/**
+ * Crash forensics: the 12:03 outage left no trace because the process died
+ * silently. Log the reason (stderr + data/crash.log) before exiting so the next
+ * incident is diagnosable from the panel console.
+ */
+function logCrash(kind: string, err: unknown): void {
+  const detail =
+    err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+  const line = `[${new Date().toISOString()}] ${kind}: ${detail}\n`;
+  process.stderr.write(`[server-v2] ${line}`);
+  try {
+    appendFileSync(process.env.CRASH_LOG_PATH ?? './data/crash.log', line);
+  } catch {
+    /* logging must never throw */
+  }
+}
+process.on('uncaughtException', (err) => {
+  logCrash('uncaughtException', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logCrash('unhandledRejection', reason);
+});
 import { spawn, type ChildProcess } from 'node:child_process';
 
 const PORT = resolvePort(); // PORT → SERVER_PORT (Pterodactyl) → 4000
