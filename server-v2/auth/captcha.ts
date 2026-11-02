@@ -23,6 +23,23 @@ export function captchaEnabled(): boolean {
   return Boolean(process.env.HCAPTCHA_SECRET)
 }
 
+/**
+ * Production must not silently run without captcha (that is exactly how the
+ * migration re-opened registration). Same precedent as jwt.ts, which throws
+ * when JWT_SECRET is missing in production. Escape hatch: CAPTCHA_DISABLED=1.
+ */
+export function assertCaptchaConfigured(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.HCAPTCHA_SECRET) return
+  if (env.CAPTCHA_DISABLED === '1') {
+    process.stderr.write('[captcha] disabled on purpose (CAPTCHA_DISABLED=1)\n')
+    return
+  }
+  if (env.NODE_ENV === 'production') {
+    throw new Error('HCAPTCHA_SECRET is required in production (set CAPTCHA_DISABLED=1 to opt out)')
+  }
+  process.stderr.write('[captcha] HCAPTCHA_SECRET not set - captcha not enforced (non-production)\n')
+}
+
 export async function verifyCaptcha(token: unknown, remoteIp?: string): Promise<CaptchaResult> {
   const secret = process.env.HCAPTCHA_SECRET
   if (!secret) {

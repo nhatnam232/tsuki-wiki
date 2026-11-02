@@ -9,6 +9,7 @@ import { createApp } from './app';
 import { closeDb, currentDbPath, getDb, isWalEnabled } from './db/index';
 import { attachWebSocket, closeWebSocket } from './ws/server';
 import { startMalWorker } from './services/malWorker';
+import { assertCaptchaConfigured } from './auth/captcha';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 const PORT = resolvePort(); // PORT → SERVER_PORT (Pterodactyl) → 4000
@@ -59,6 +60,7 @@ function startTunnel(): void {
 }
 
 function main(): void {
+  assertCaptchaConfigured(); // fail-fast: production must not run without captcha
   const db = getDb(); // mở DB + chạy migration ngay khi boot (fail-fast nếu schema lỗi)
 
   process.stderr.write(
