@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { CheckCircle2, Loader2, Lock, Mail, ShieldCheck, User as UserIcon, X } from 'lucide-react'
+import { CheckCircle2, Loader2, Lock, Mail, User as UserIcon, X } from 'lucide-react'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
-import HCaptchaWidget from './HCaptchaWidget'
 
 type Mode = 'signin' | 'signup'
 
@@ -15,13 +14,10 @@ type Props = {
 export default function AuthModal({ open, onClose, initialMode = 'signin' }: Props) {
   const { signInWithGoogle, signInWithEmail, signUpWithEmail, configured } = useAuth()
   const { t } = useLangContext()
-  const hCaptchaSiteKey = import.meta.env.VITE_HCAPTCHA_SITE_KEY
   const [mode, setMode] = useState<Mode>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
-  const [captchaResetSignal, setCaptchaResetSignal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [emailSent, setEmailSent] = useState(false)
@@ -32,7 +28,6 @@ export default function AuthModal({ open, onClose, initialMode = 'signin' }: Pro
     setEmail('')
     setPassword('')
     setDisplayName('')
-    setCaptchaToken(null)
     setError(null)
     setEmailSent(false)
   }
@@ -44,12 +39,6 @@ export default function AuthModal({ open, onClose, initialMode = 'signin' }: Pro
 
   const handleGoogle = async () => {
     setError(null)
-    // hCaptcha is mandatory whenever a site key is configured — even for OAuth
-    // — to keep automated signup attempts at bay.
-    if (hCaptchaSiteKey && !captchaToken) {
-      setError(t.completeCaptcha)
-      return
-    }
     try {
       setLoading(true)
       await signInWithGoogle()
@@ -64,30 +53,19 @@ export default function AuthModal({ open, onClose, initialMode = 'signin' }: Pro
     e.preventDefault()
     setError(null)
 
-    if (hCaptchaSiteKey && !captchaToken) {
-      setError(t.completeCaptcha)
-      return
-    }
-
     setLoading(true)
     try {
       if (mode === 'signin') {
-        const res = await signInWithEmail(email, password, captchaToken || undefined)
+        const res = await signInWithEmail(email, password)
         if (res.error) setError(res.error)
         else handleClose()
       } else {
-        const res = await signUpWithEmail(
-          email,
-          password,
-          displayName || undefined,
-          captchaToken || undefined,
-        )
+        const res = await signUpWithEmail(email, password, displayName || undefined)
         if (res.error) setError(res.error)
         else if (res.needsConfirmation) setEmailSent(true)
         else handleClose()
       }
     } finally {
-      setCaptchaResetSignal((value) => value + 1)
       setLoading(false)
     }
   }
@@ -136,29 +114,9 @@ export default function AuthModal({ open, onClose, initialMode = 'signin' }: Pro
               </div>
             )}
 
-            {/*
-              hCaptcha is rendered ONCE at the top of the modal and is required
-              for both Google sign-in and email/password. Doing it once means
-              users only have to solve the puzzle a single time per session
-              and we never silently bypass captcha for OAuth.
-            */}
-            {hCaptchaSiteKey && (
-              <div className="mb-4 rounded-lg border border-gray-800 bg-background p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-xs text-text-muted">
-                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-                  {t.completeCaptchaPrompt}
-                </div>
-                <HCaptchaWidget
-                  siteKey={hCaptchaSiteKey}
-                  onVerify={setCaptchaToken}
-                  resetSignal={captchaResetSignal}
-                />
-              </div>
-            )}
-
             <button
               onClick={handleGoogle}
-              disabled={loading || !configured || (hCaptchaSiteKey ? !captchaToken : false)}
+              disabled={loading || !configured}
               className="mb-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-700 bg-white py-2.5 font-medium text-gray-800 transition hover:bg-gray-100 disabled:opacity-50"
             >
               <GoogleIcon className="h-5 w-5" />
@@ -216,7 +174,7 @@ export default function AuthModal({ open, onClose, initialMode = 'signin' }: Pro
 
               <button
                 type="submit"
-                disabled={loading || !configured || (hCaptchaSiteKey ? !captchaToken : false)}
+                disabled={loading || !configured}
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2.5 font-medium text-white transition hover:bg-primary-hover disabled:opacity-50"
               >
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}

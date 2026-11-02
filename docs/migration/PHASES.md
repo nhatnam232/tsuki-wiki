@@ -27,8 +27,9 @@
 | `8fd61a6` | feat(web): migrate likes, library button, quests and notifications to the API (G4 đang chạy) |
 | `52e8dcc` | chore(web): drop unused captchaToken param name after auth migration |
 | `d3f46e6` | feat(auth): verify hCaptcha server-side on login and register (G11 code, chưa enforce prod) |
+| `e819493` | feat(auth): require HCAPTCHA_SECRET in production, fail fast at boot |
 
-`main` **ahead `origin/main` 16 commit**, chưa push (mới nhất `d3f46e6`). Tại thời điểm planner kiểm 11:38: working tree có thay đổi của dev (`server-v2/auth/routes.ts`, `src/lib/backend.ts`, `src/providers/AuthProvider.tsx`, `?? server-v2/auth/captcha.ts`); `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **ahead `origin/main` 17 commit**, chưa push (mới nhất `e819493`). Tại thời điểm planner kiểm 11:38: working tree có thay đổi của dev (`server-v2/auth/routes.ts`, `src/lib/backend.ts`, `src/providers/AuthProvider.tsx`, `?? server-v2/auth/captcha.ts`); `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -185,7 +186,7 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
 - **[P0 → MITIGATED + hardening DONE 10:45, `f430123`] Bypass rate-limit qua XFF/origin:** cloudflared trong container; app tự bind `127.0.0.1` khi có `TUNNEL_TOKEN` (WARNING nếu không loopback), supervisor backoff 1s→30s/reset 60s, `TRUSTED_PROXIES=127.0.0.1`; origin **connection refused** từ ngoài, domain 200, XFF spoof → 429. Fragility IP ISP hết. **Còn nợ docs:** `.env.example` thiếu `HOST`/`TUNNEL_TOKEN` + comment `TRUSTED_PROXIES` còn IP host cũ (dev cập nhật). **Vantage:** tiêu chí `"success":true` count = 0 qua fetcher ngoài, không phải `grep untrusted_proxy`.
 - **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
-- **[G11 ❌ — captcha server-side CHƯA ENFORCE trên prod]:** code đã commit `d3f46e6` (`auth/captcha.ts`, `routes.ts:128-133,208-213`), `.env.example:87` có `HCAPTCHA_SECRET`; **nhưng live login không token → 401** (phải **400 `captcha_required`**); reviewer test `register` không token → **201 tạo user thật**. Nguyên nhân: build chưa deploy hoặc secret chưa set; `captcha.ts:28-33` **fail-open** (chỉ warning). **Bắt buộc:** production thiếu `HCAPTCHA_SECRET` ⇒ **throw lúc boot** (cùng luật `JWT_SECRET`), chỉ bỏ qua khi `CAPTCHA_DISABLED=1`; deploy + verify live bằng `login` (không dùng `register`).
+- **[G11 ❌ — captcha server-side CHƯA ENFORCE trên prod, code done]** (commits `d3f46e6` verify + `e819493` fail-fast boot; frontend bundle đã bake site key `1b487296…ae32`): code đã commit `d3f46e6` (`auth/captcha.ts`, `routes.ts:128-133,208-213`), `.env.example:87` có `HCAPTCHA_SECRET`; **nhưng live login không token → 401** (phải **400 `captcha_required`**); reviewer test `register` không token → **201 tạo user thật**. Nguyên nhân: build chưa deploy hoặc secret chưa set; `captcha.ts:28-33` **fail-open** (chỉ warning). **Bắt buộc:** production thiếu `HCAPTCHA_SECRET` ⇒ **throw lúc boot** (cùng luật `JWT_SECRET`), chỉ bỏ qua khi `CAPTCHA_DISABLED=1`; rollback phải **thêm cờ + xoá secret cùng lúc** rồi restart một lần (xoá secret trước khi có cờ ⇒ crash-loop); **secret thắng cờ** là ngữ nghĩa cố ý, không sửa code. Deploy + verify live bằng `login` (không dùng `register`).
 - **[G10 ✅ PASS 11:25] Google OAuth production:** sir login Google thật; DB có user `kobitnx223@gmail.com` (provider=google, username=jades, badges=["admin"]), `last_login_at=2026-11-02T11:25:51.349Z`, 1 session tạo 11:25:51.355Z, `revoked_at=null`; `/api/auth/google/start` → **302** đúng (trước là 503). Không còn blocker/không còn là quyết định sản phẩm.
 
 ---

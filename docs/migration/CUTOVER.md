@@ -19,6 +19,26 @@
 | G10 | **Google OAuth production** | ✅ **PASS (11:25)** — sir login Google thật trên production: user `kobitnx223@gmail.com`, `provider=google`, `username=jades`, `badges=["admin"]`, `last_login_at=2026-11-02T11:25:51.349Z`; tạo **1 session** lúc `11:25:51.355Z`, `revoked_at=null`, redirect về `https://animewiki.eu.cc/`. `/api/auth/google/start` giờ trả **302** (client_id/redirect_uri/scope/PKCE S256 đúng, không `redirect_uri_mismatch`; trước đó 503). **Không còn là blocker** |
 | G11 | **Captcha kiểm ở server (không chỉ UI)** | ❌ **CHƯA ENFORCE TRÊN PROD (11:45)** — code đã **commit `d3f46e6`** (`auth/captcha.ts` + `routes.ts:128-133,208-213`), `.env.example:87` đã có `HCAPTCHA_SECRET`. **Nhưng live:** `POST /api/auth/login` không token → **401 `invalid_credentials`** (phải **400 `captcha_required`**); reviewer test `register` không token → **201 tạo user thật** (đã xin lỗi + dọn). Nguyên nhân: prod **chưa deploy build mới** hoặc **`HCAPTCHA_SECRET` chưa set** ⇒ `captcha.ts:28-33` **fail-open** (chỉ warning stderr). **Bắt buộc sửa:** production thiếu `HCAPTCHA_SECRET` ⇒ **throw lúc boot** (cùng luật `jwt.ts:43-45`), chỉ bỏ qua khi `CAPTCHA_DISABLED=1` set tường minh. **Live gate:** `curl -s -o /dev/null -w '%{http_code}' -X POST https://api.animewiki.eu.cc/api/auth/login -H 'content-type: application/json' -d '{"email":"probe@example.invalid","password":"x"}'` → **400**; `401` = chưa enforce. **Không dùng `register` để probe** (tạo user thật). |
 
+### G11 — Captcha cutover runbook (site key ↔ secret, build-time)
+
+**Trạng thái 11:42:** code server đã xong (`d3f46e6` verify, `e819493` fail-fast boot: production thiếu `HCAPTCHA_SECRET` ⇒ throw trừ `CAPTCHA_DISABLED=1`). Frontend đang deploy **đã bake site key** (bundle `assets/index-DOKDDPZJ.js`, 8 hit `hcaptcha`, site key `1b487296…ae32` — UUID công khai). **Gate vẫn đỏ** cho tới khi live login trả **400 `captcha_required`**.
+
+| Kịch bản sai | Hệ quả | Cách phát hiện |
+|---|---|---|
+| Bundle **thiếu** `VITE_HCAPTCHA_SITE_KEY` (build frontend thiếu env) | Widget không render → user gửi 0 token → khi bật secret **mọi login 400 `captcha_required`** | `curl -s https://animewiki.eu.cc | grep -oE '/assets/index-[^"]+\.js'` rồi `curl -s https://animewiki.eu.cc<asset> | grep -c hcaptcha` → phải **> 0** |
+| `HCAPTCHA_SECRET` **khác account** với site key `1b487296…ae32` | `siteverify` trả `success:false` cho mọi token ⇒ **mọi login `captcha_failed`** | Chỉ phát hiện bằng **1 lần login browser thật** sau khi bật |
+
+> `VITE_HCAPTCHA_SITE_KEY` là **build-time**: đổi/rotate site key phải **rebuild frontend**; restart server không đủ.
+
+**Trình tự flip (0 → 6):**
+0. Trong dashboard hCaptcha, đối chiếu `HCAPTCHA_SECRET` thuộc **cùng account/site key** `1b487296…ae32`.
+1. Set `HCAPTCHA_SECRET` (≥ production secret, không log giá trị).
+2. Bỏ `CAPTCHA_DISABLED` khỏi env.
+3. Restart/redeploy backend.
+4. **Live gate:** `curl -s -o /dev/null -w '%{http_code}' -X POST https://api.animewiki.eu.cc/api/auth/login -H 'content-type: application/json' -d '{"email":"probe@example.invalid","password":"x"}'` → **400**.
+5. **Login browser thật 1 lần** (giải captcha) → phải 200 + cookie; nếu `captcha_failed` toàn bộ ⇒ secret sai account.
+6. **Rollback nếu sai:** **thêm `CAPTCHA_DISABLED=1` VÀ xoá `HCAPTCHA_SECRET` cùng lúc**, rồi restart **một lần** (captcha tắt, site sống). **Thứ tự bắt buộc:** không xoá secret trước khi có cờ — production thiếu secret mà chưa có cờ ⇒ `assertCaptchaConfigured` **throw lúc boot** ⇒ crash-loop/site sập; đặt cờ trước rồi xoá secret trong cùng lần thay đổi là an toàn. **Ngữ nghĩa cố ý giữ nguyên: `HCAPTCHA_SECRET` thắng `CAPTCHA_DISABLED`** — `verifyCaptcha` **không** đọc cờ (secret check chạy trước ở `assertCaptchaConfigured`, xem `captcha.ts:31-32,44`); đừng “sửa” code để cờ short-circuit, vì sẽ tái tạo đúng lỗi “tưởng tắt mà vẫn bật”. Khuyến nghị thêm comment trong `verifyCaptcha`: “cố ý KHÔNG đọc CAPTCHA_DISABLED — secret thắng cờ”.
+
 > **No-Go nếu bất kỳ G2, G3, G4, G6, G7, G11 đỏ.** G1/G5/G8/G9/G10 đã xanh; G9 hardening done (`f430123`), G10 Google OAuth verified thật (11:25). G11 (captcha server-side) đang làm dở trong working tree. Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
 >
 > **Phương án tạm nếu TLS chưa xong (phải chốt bằng văn bản):** chỉ dùng `IP:port` + `COOKIE_SECURE=false` trong **LAN/test nội bộ**, tuyệt đối không mời user thật và không gọi đó là production. Ghi rõ ngày hết hạn của phương án tạm và người chịu trách nhiệm.
