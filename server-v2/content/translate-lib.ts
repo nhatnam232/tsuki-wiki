@@ -134,6 +134,41 @@ async function translateViaLibreTranslate(
   }
 }
 
+
+/**
+ * Split text into <=450-character chunks on sentence/word boundaries
+ * (MyMemory's anonymous endpoint rejects longer payloads).
+ */
+function splitForMyMemory(text: string, maxChars = 450): string[] {
+  if (text.length <= maxChars) return [text]
+  const sentences = text.split(/(?<=[.!?])\s+/)
+  const chunks: string[] = []
+  let current = ''
+  for (const sentence of sentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence
+    if (candidate.length <= maxChars) {
+      current = candidate
+      continue
+    }
+    if (current) chunks.push(current)
+    if (sentence.length <= maxChars) {
+      current = sentence
+      continue
+    }
+    // Very long sentence: hard-split on word boundaries.
+    let rest = sentence
+    while (rest.length > maxChars) {
+      const cut = rest.lastIndexOf(' ', maxChars)
+      const at = cut > 0 ? cut : maxChars
+      chunks.push(rest.slice(0, at))
+      rest = rest.slice(at).trimStart()
+    }
+    current = rest
+  }
+  if (current) chunks.push(current)
+  return chunks.filter(Boolean)
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function translateText(
   text: string,
@@ -171,12 +206,25 @@ export async function translateText(
     }
   }
 
-  // 3. Fallback MyMemory (miễn phí, không cần cấu hình)
-  const myMemoryResult = await translateViaMyMemory(normalized, targetLang)
-  if (myMemoryResult) {
-    await saveCachedTranslation(hash, normalized, myMemoryResult, targetLang, 'mymemory')
-    return { translatedText: myMemoryResult, available: true }
+  // 3. Fallback MyMemory (miễn phí, không cần cấu hình).
+  // MyMemory rejects requests over ~500 characters, so long text is split on
+  // sentence boundaries and translated chunk by chunk. Without this every
+  // wikipedia section (>500 chars) silently failed to translate.
+  const chunks = splitForMyMemory(normalized)
+  const parts: string[] = []
+  for (const chunk of chunks) {
+    const part = await translateViaMyMemory(chunk, targetLang)
+    if (!part) {
+      // Partial success is still useful, but report it as unavailable so the
+      // client does not mistake English text for a translation.
+      if (parts.length === 0) {
+        return { available: false, reason: 'Tất cả dịch vụ dịch thuật hiện không khả dụng.' }
+      }
+      break
+    }
+    parts.push(part)
   }
-
-  return { available: false, reason: 'Tất cả dịch vụ dịch thuật hiện không khả dụng.' }
+  const joined = parts.join(' ')
+  await saveCachedTranslation(hash, normalized, joined, targetLang, 'mymemory')
+  return { translatedText: joined, available: true }
 }

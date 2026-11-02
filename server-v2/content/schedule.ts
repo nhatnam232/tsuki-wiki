@@ -59,8 +59,18 @@ router.get('/', async (req: Request, res: Response) => {
     const now = Math.floor(Date.now() / 1000)
     const sevenDays = 7 * 24 * 60 * 60
 
-    const startQ = Number.parseInt(req.query.start as string, 10)
-    const endQ = Number.parseInt(req.query.end as string, 10)
+    const startRaw = req.query.start as string | undefined
+    const endRaw = req.query.end as string | undefined
+    const startQ = Number.parseInt(startRaw ?? '', 10)
+    const endQ = Number.parseInt(endRaw ?? '', 10)
+    // Epoch seconds only. parseInt('2026-11-02') is 2026 (finite!), so require
+    // a pure digit string instead of trusting Number.isFinite.
+    if (startRaw !== undefined && !/^\d{9,11}$/.test(startRaw)) {
+      return res.status(400).json({ success: false, error: 'invalid_start', hint: 'epoch seconds' })
+    }
+    if (endRaw !== undefined && !/^\d{9,11}$/.test(endRaw)) {
+      return res.status(400).json({ success: false, error: 'invalid_end', hint: 'epoch seconds' })
+    }
 
     const start = Number.isFinite(startQ) ? startQ : now - 24 * 60 * 60
     const end = Number.isFinite(endQ) ? endQ : start + sevenDays + 24 * 60 * 60

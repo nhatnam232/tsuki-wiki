@@ -192,12 +192,11 @@ router.get('/sections', async (req: Request, res: Response) => {
   if (translate && data._resolvedLang !== translateTo) {
     for (const s of stripped) {
       if (!s.text) continue
-      const capped = s.text.slice(0, 1500)
+      const capped = s.text.slice(0, 4000)
       try {
         const result = await translateText(capped, translateTo as 'vi' | 'en')
-        if (result.available) {
-          ;(s as any).translated = result.translatedText
-        }
+        ;(s as any).translated = result.available ? result.translatedText : null
+        if (!result.available) (s as any).translatedUnavailable = true
       } catch {
         // swallow — section just won't have a translated version
       }
