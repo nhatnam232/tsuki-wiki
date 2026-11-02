@@ -22,8 +22,11 @@
 | `38e787f` | fix(security): fail-closed proxy allowlist, log real client IP (G9 mitigated, test 101/101) |
 | `ac2cf39` | feat(deploy): run cloudflared inside container, bind app to loopback (G9 hardening done) |
 | `f430123` | fix(deploy): default to loopback with a tunnel, supervise cloudflared |
+| `e7c8930` | feat(api): media upload, favorites count, single library entry |
+| `2cd3138` | feat(web): drop supabase-js from auth layer, use backend client |
+| `8fd61a6` | feat(web): migrate likes, library button, quests and notifications to the API (G4 đang chạy) |
 
-`main` **ahead `origin/main` 11 commit**, chưa push (mới nhất `f430123`). Tại thời điểm planner kiểm 10:46: `git status` **sạch**; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **ahead `origin/main` 14 commit**, chưa push (mới nhất `8fd61a6`). Tại thời điểm planner kiểm 11:30: `git status` **sạch**; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -180,7 +183,7 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
 - **[P0 → MITIGATED + hardening DONE 10:45, `f430123`] Bypass rate-limit qua XFF/origin:** cloudflared trong container; app tự bind `127.0.0.1` khi có `TUNNEL_TOKEN` (WARNING nếu không loopback), supervisor backoff 1s→30s/reset 60s, `TRUSTED_PROXIES=127.0.0.1`; origin **connection refused** từ ngoài, domain 200, XFF spoof → 429. Fragility IP ISP hết. **Còn nợ docs:** `.env.example` thiếu `HOST`/`TUNNEL_TOKEN` + comment `TRUSTED_PROXIES` còn IP host cũ (dev cập nhật). **Vantage:** tiêu chí `"success":true` count = 0 qua fetcher ngoài, không phải `grep untrusted_proxy`.
 - **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
-- **[P2/G10 — quyết định sản phẩm] Google OAuth production đang 503 `oauth_not_configured`** (verify 10:33) — cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu launch cần Google login; nếu không, phải thông báo user chỉ đăng nhập email/password.
+- **[G10 ✅ PASS 11:25] Google OAuth production:** sir login Google thật; DB có user `kobitnx223@gmail.com` (provider=google, username=jades, badges=["admin"]), `last_login_at=2026-11-02T11:25:51.349Z`, 1 session tạo 11:25:51.355Z, `revoked_at=null`; `/api/auth/google/start` → **302** đúng (trước là 503). Không còn blocker/không còn là quyết định sản phẩm.
 
 ---
 

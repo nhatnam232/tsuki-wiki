@@ -159,7 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signUpWithEmail = useCallback(
-    async (email: string, password: string, displayName?: string, captchaToken?: string) => {
+    async (email: string, password: string, displayName?: string, _captchaToken?: string) => {
       void displayName
       try {
         await authApi.register(email, password, email.split('@')[0] ?? 'user')
