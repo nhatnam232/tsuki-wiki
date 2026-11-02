@@ -21,8 +21,9 @@
 | `69a6573` | fix(security): derive client IP from socket/cf-connecting-ip, never XFF (G9 fix, test 101/101) |
 | `38e787f` | fix(security): fail-closed proxy allowlist, log real client IP (G9 mitigated, test 101/101) |
 | `ac2cf39` | feat(deploy): run cloudflared inside container, bind app to loopback (G9 hardening done) |
+| `f430123` | fix(deploy): default to loopback with a tunnel, supervise cloudflared |
 
-`main` **ahead `origin/main` 10 commit**, chưa push (mới nhất `ac2cf39`). Tại thời điểm planner kiểm 10:42 (trước khi planner sửa docs): `git status` **sạch**; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **ahead `origin/main` 11 commit**, chưa push (mới nhất `f430123`). Tại thời điểm planner kiểm 10:46: `git status` **sạch**; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -177,7 +178,7 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - 73 policy nhưng nhiều policy trùng logic (own/read-all) → gom helper, tránh copy-paste 73 lần; test vẫn phải đủ 73 case để không mất dấu.
 - Trigger counter + soft delete dễ lệch khi update nhiều lần `is_deleted` → test toggle 2 chiều.
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
-- **[P0 → MITIGATED + hardening DONE 10:40, `ac2cf39`] Bypass rate-limit qua XFF/origin:** cloudflared chuyển **vào container**, app bind `127.0.0.1`, `TRUSTED_PROXIES=127.0.0.1`, host systemd disabled; origin **connection refused** từ ngoài, domain 200, domain XFF sau bucket đầy → **429**. Fragility IP ISP hết. **Nợ vận hành:** `HOST` unset ⇒ `0.0.0.0` (checklist deploy phải set); cloudflared exit không retry (dựa restart policy); bổ sung `HOST`/`TUNNEL_TOKEN` vào `.env.example`. **Vantage:** origin phải test bằng fetcher ngoài; tiêu chí `"success":true` count = 0, không chỉ `grep untrusted_proxy`.
+- **[P0 → MITIGATED + hardening DONE 10:45, `f430123`] Bypass rate-limit qua XFF/origin:** cloudflared trong container; app tự bind `127.0.0.1` khi có `TUNNEL_TOKEN` (WARNING nếu không loopback), supervisor backoff 1s→30s/reset 60s, `TRUSTED_PROXIES=127.0.0.1`; origin **connection refused** từ ngoài, domain 200, XFF spoof → 429. Fragility IP ISP hết. **Còn nợ docs:** `.env.example` thiếu `HOST`/`TUNNEL_TOKEN` + comment `TRUSTED_PROXIES` còn IP host cũ (dev cập nhật). **Vantage:** tiêu chí `"success":true` count = 0 qua fetcher ngoài, không phải `grep untrusted_proxy`.
 - **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
 - **[P2/G10 — quyết định sản phẩm] Google OAuth production đang 503 `oauth_not_configured`** (verify 10:33) — cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu launch cần Google login; nếu không, phải thông báo user chỉ đăng nhập email/password.
 

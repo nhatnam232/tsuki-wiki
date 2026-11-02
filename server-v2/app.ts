@@ -18,6 +18,7 @@ import { createAdminRouter } from './admin/routes';
 import { createCoreRouter } from './routes/core';
 import { createExtrasRouter } from './routes/extras';
 import { createMediaRouter } from './media/routes';
+import { createUploadRouter } from './media/upload';
 import { corsWhitelist, requireSameOrigin, requireTrustedProxy, resolveClientIp, securityHeaders, trustedProxies } from './middleware/security';
 
 export interface AppDeps {
@@ -99,6 +100,8 @@ export function createApp(deps: AppDeps = {}): express.Express {
   // Phase 1a — REST 8 bảng lõi + media tĩnh.
   app.use('/api', requireSameOrigin, createCoreRouter(db, { disableRateLimit: deps.disableRateLimit }));
   app.use('/api', requireSameOrigin, createExtrasRouter(db));
+  // Upload phải mount TRƯỚC router static /media và cần auth.
+  app.use('/api/media', requireSameOrigin, requireAuth(db), createUploadRouter());
   app.use('/media', createMediaRouter());
 
   // 404 JSON cho mọi path /api/* chưa mount.
@@ -108,12 +111,22 @@ export function createApp(deps: AppDeps = {}): express.Express {
 
   // Error handler JSON; không leak stack khi NODE_ENV=production.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const body: Record<string, unknown> = { success: false, error: 'internal_error' };
+    // body-parser errors (payload too large, bad content-type) carry their own
+    // status; without this they surfaced as 500 and clients could not tell an
+    // oversized upload from a server bug.
+    const status = Number((err as { status?: number; statusCode?: number })?.status
+      ?? (err as { statusCode?: number })?.statusCode
+      ?? 500);
+    const code = Number.isInteger(status) && status >= 400 && status < 600 ? status : 500;
+    const body: Record<string, unknown> = {
+      success: false,
+      error: code === 413 ? 'payload_too_large' : code === 415 ? 'unsupported_media_type' : 'internal_error',
+    };
     if (process.env.NODE_ENV !== 'production' && err instanceof Error) {
       body.detail = err.message;
       body.stack = err.stack;
     }
-    res.status(500).json(body);
+    res.status(code).json(body);
   });
 
   return app;

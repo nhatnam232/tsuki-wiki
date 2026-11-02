@@ -102,6 +102,14 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
   }));
 
   // ── favorites ───────────────────────────────────────────────
+  // Public: tổng số favorite của 1 anime.
+  r.get('/favorites/count', h((req, res) => {
+    const animeId = int(req.query.anime_id ?? req.query.animeId);
+    if (animeId === null) return fail(res, 400, 'invalid_anime_id');
+    const row = db.prepare('select count(*) c from favorites where anime_id = ?').get(animeId) as { c: number };
+    ok(res, { anime_id: animeId, count: row.c });
+  }));
+
   r.get('/favorites', requireAuthMw, h((req, res) => {
     const a = auth(req);
     const rows = db.prepare('select * from favorites where user_id = ? order by created_at desc limit 200')
@@ -143,6 +151,14 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     const a = auth(req);
     const row = db.prepare('select * from user_library_stats where user_id = ?').get(a?.userId) as Row | undefined;
     ok(res, { stats: row ?? { user_id: a?.userId, total_anime: 0 } });
+  }));
+
+  r.get('/library/:animeId', requireAuthMw, h((req, res) => {
+    const animeId = int(req.params.animeId);
+    if (animeId === null) return fail(res, 400, 'invalid_anime_id');
+    const row = db.prepare('select * from user_library where user_id = ? and anime_id = ?').get(req.auth?.userId, animeId) as Row | undefined;
+    if (!row) return fail(res, 404, 'not_found');
+    ok(res, { item: row });
   }));
 
   r.post('/library', requireAuthMw, h((req, res) => {
