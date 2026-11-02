@@ -84,19 +84,36 @@ async function translateViaDeepL(
 }
 
 // ─── MyMemory free API (không cần key, 5000 ký tự/ngày/IP) ───────────────────
+/**
+ * MyMemory allows ~5k chars/day per IP and answers 429 once exhausted. Keep a
+ * short circuit breaker so a quota-exhausted IP fails fast instead of making
+ * every section/section-chunk wait for its own timeout (a long wiki article
+ * used to sit there for 38s+ and risk Cloudflare's 100s idle timeout).
+ */
+let myMemoryBlockedUntil = 0
+const MYMEMORY_COOLDOWN_MS = 10 * 60 * 1000
+
+function isMyMemoryBlocked(): boolean {
+  return Date.now() < myMemoryBlockedUntil
+}
+
 async function translateViaMyMemory(text: string, targetLang: string): Promise<string | null> {
+  if (isMyMemoryBlocked()) return null
   try {
     const langPair = `en|${targetLang}`
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${langPair}`
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-    if (!res.ok) return null
-    const data = (await res.json()) as {
-      responseStatus: number
+    const data = (await res.json().catch(() => ({}))) as {
+      responseStatus?: number
       responseData?: { translatedText?: string }
     }
-    if (data.responseStatus === 200 && data.responseData?.translatedText) {
-      return data.responseData.translatedText
+    const text_ = data.responseData?.translatedText ?? ''
+    if (res.status === 429 || data.responseStatus === 429 || /MYMEMORY WARNING/i.test(text_)) {
+      myMemoryBlockedUntil = Date.now() + MYMEMORY_COOLDOWN_MS
+      process.stderr.write('[translate] MyMemory quota exhausted - cooling down 10m\n')
+      return null
     }
+    if (res.ok && data.responseStatus === 200 && text_) return text_
     return null
   } catch {
     return null
@@ -229,6 +246,9 @@ export async function translateText(
   // MyMemory rejects requests over ~500 characters, so long text is split on
   // sentence boundaries and translated chunk by chunk. Without this every
   // wikipedia section (>500 chars) silently failed to translate.
+  if (isMyMemoryBlocked()) {
+    return { available: false, reason: 'Dịch vụ dịch tạm hết hạn mức, thử lại sau.' }
+  }
   const chunks = splitForMyMemory(normalized)
   // Small concurrency: MyMemory throttles anonymous callers, but sequential
   // chunk translation made a long wiki section take ~60s.

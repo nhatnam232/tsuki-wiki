@@ -39,8 +39,9 @@
 | `c9c108f` | feat(server-v2): port the AniList/Jikan content API (fix cutover partial failure) |
 | `b836036` | fix(content): use the Wikipedia Action API for wiki sections (G14 fixed) |
 | `d3318aa` | docs: cutover follow-ups (content API lesson, monitoring, post-cutover backlog) |
+| `6feaa9b` | fix(content): chunk long translations, validate schedule params (G15/P2 fixed in code) |
 
-`main` **đã push** — `origin/main` = HEAD **`d3318aa`** (29 commit trên nhánh). **CUTOVER 12:24 (2026-11-02)** commit `0fb07b3` pushed, Vercel production READY, live `index-C9V0MWsi.js`, hcaptcha 0, SDK 0, CSRF OK — **nhưng FAIL content API** (trang nội dung “Unable to load data”); **fix `c9c108f` port 9 route content**, verify live 9 endpoint 200. **Bài học:** cutover checklist phải verify mọi route `src/lib/api.ts`, không chỉ 73 policy DB — **test sâu phụ thuộc bên thứ 3**, **kiểm health upstream** và **kiểm dữ liệu trả về** (fallback âm thầm: G15 translate=vi trả 200 nhưng không dịch). Sau cutover: xoá `server/`/`api/`/`deploy/bundle`, bỏ dep `@supabase/supabase-js`, xoá cron Vercel + env Supabase, giữ Supabase backup 30 ngày, giám sát `data/crash.log` 24h, G12 manual. Còn **G13 render smoke** (manual). `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **đã push** — `origin/main` = HEAD **`6feaa9b`** (30 commit trên nhánh). **CUTOVER 12:24 (2026-11-02)** commit `0fb07b3` pushed, Vercel production READY, live `index-C9V0MWsi.js`, hcaptcha 0, SDK 0, CSRF OK — **nhưng FAIL content API** (trang nội dung “Unable to load data”); **fix `c9c108f` port 9 route content**, verify live 9 endpoint 200. **Bài học:** cutover checklist phải verify mọi route `src/lib/api.ts`, không chỉ 73 policy DB — **test sâu phụ thuộc bên thứ 3**, **kiểm health upstream** và **kiểm dữ liệu trả về** (fallback âm thầm: G15 translate=vi trả 200 nhưng không dịch). Sau cutover: xoá `server/`/`api/`/`deploy/bundle`, bỏ dep `@supabase/supabase-js`, xoá cron Vercel + env Supabase, giữ Supabase backup 30 ngày, giám sát `data/crash.log` 24h, G12 manual. Còn **G13 render smoke** (manual). `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -278,11 +279,11 @@ npm run check && npm run lint && npm run build
 - [ ] Bỏ dep `@supabase/supabase-js` + lockfile; dọn chuỗi UI “Supabase is not configured”.
 - [ ] Xoá cron Vercel `/api/admin/rotate-password` + env Supabase trên Vercel.
 - [ ] Supabase read-only + backup 30 ngày trước khi xoá project.
-- [ ] Giám sát 24h `data/crash.log`, error rate, login fail, WS; **đối chiếu timestamp với 2 blip deploy 12:03 và 12:13–12:14** để loại trừ restart-do-deploy trước khi kết luận crash (gửi tester nếu có entry).
+- [ ] Giám sát 24h `data/crash.log`, error rate, login fail, WS; đối chiếu 3 sự cố (12:03, 12:13, 12:45) với deploy. **Sự cố #3 là panel/provider (504/SFTP treo/no crash.log)**; failover `/opt/tsuki-failover` + systemd `tsuki-api` (DB snapshot 11:55) — **cấm chạy song song 2 tunnel/2 DB**, phải sync một chiều khi chuyển. Failover đã tắt (container chạy lại; `tsuki-api`/`cloudflared-animewiki` disabled); bật lại phải tắt tunnel container trước. `CAPTCHA_DISABLED=1` là **chủ ý** (decision B), không phải misconfig.
 - [ ] G12 Bot Fight Mode (manual, sir) + G13 browser render smoke.
 - [x] **G14 FIXED `b836036`:** Action API; Naruto en 8 / vi 6, Frieren en 5.
-- [ ] **G15:** dịch >~500 chars fail (MyMemory limit; DeepL chưa cấu hình) — wiki-import silent fallback trả tiếng Anh + `translatedTo:"vi"`; cần `DEEPL_API_KEY` + trả `translated:false`.
-- [ ] **P2 schedule:** nhận epoch giây (đúng, 115 items); ISO → `[]` 200 ⇒ validate/convert thay vì im lặng.
+- [ ] **G15 PARTIAL/PROVIDER-LIMITED (không phải bug code):** cùng code, egress failover IP → 620 chars 200 (2.46s), Frieren 4/5; container IP → 503 (0.83s), 0/5 ⇒ quota MyMemory theo IP (`next in 20h`). Cần `DEEPL_API_KEY` hoặc chờ reset; sections ~38s → CF 524 risk.
+- [x] **P2 schedule FIXED + verify live:** ISO → 400 `invalid_start`, epoch → 200/115 items.
 
 ## Thứ tự giao việc & gate
 
