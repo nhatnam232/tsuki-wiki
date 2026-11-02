@@ -29,8 +29,10 @@
 | `d3f46e6` | feat(auth): verify hCaptcha server-side on login and register (G11 code, chưa enforce prod) |
 | `e819493` | feat(auth): require HCAPTCHA_SECRET in production, fail fast at boot |
 | `cde5963` | feat(web): drop the hCaptcha gate; bot defence moves to Cloudflare (G11 decision B) |
+| `a6490c3` | fix(auth): let Google take over unverified password accounts, share limiter bucket (P1 fixed) |
+| `1b0b96e` | feat(web+api): migrate activity, recommendations and edit suggestions (G4 tiến triển) |
 
-`main` **ahead `origin/main` 18 commit**, chưa push (mới nhất `cde5963`). Tại thời điểm planner kiểm 11:38: working tree có thay đổi của dev (`server-v2/auth/routes.ts`, `src/lib/backend.ts`, `src/providers/AuthProvider.tsx`, `?? server-v2/auth/captcha.ts`); `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **ahead `origin/main` 20 commit**, chưa push (mới nhất `1b0b96e`). Tại thời điểm planner kiểm 11:59: working tree còn `M src/pages/AdminDashboard.tsx` (dev đang migrate, nên `npm run check` có thể lỗi tạm); `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -184,7 +186,7 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 ### Rủi ro
 - 73 policy nhưng nhiều policy trùng logic (own/read-all) → gom helper, tránh copy-paste 73 lần; test vẫn phải đủ 73 case để không mất dấu.
 - Trigger counter + soft delete dễ lệch khi update nhiều lần `is_deleted` → test toggle 2 chiều.
-- **[P1 — auth lock, chưa fix] Đăng ký mở không verify ⇒ có thể khoá Google của người khác:** `auth/routes.ts:153-154` tạo user `email_verified=0` + `password_hash`; **không có flow verify email hay reset mật khẩu** (grep rỗng). Nạn nhân login Google đúng email đó → `auth/google.ts` trả **409 `account_unverified_conflict`** ⇒ không có đường vào. **Fix rẻ (~5 dòng):** khi Google chứng minh sở hữu email, cho Google thắng — set `google_sub`, `email_verified=1`, `password_hash=NULL`. **Fix chuẩn:** flow verify email + login yêu cầu `email_verified=1 OR provider='google'`; **cảnh báo:** bật “bắt buộc verify trước login” ngay sẽ khoá toàn bộ user email/password hiện có (register luôn set 0) ⇒ phải grand-father trước.
+- **[P1 — auth lock, ĐÃ FIX `a6490c3`] Đăng ký mở không verify ⇒ có thể khoá Google của người khác:** `auth/routes.ts:153-154` tạo user `email_verified=0` + `password_hash`; **không có flow verify email hay reset mật khẩu** (grep rỗng). Nạn nhân login Google đúng email đó → `auth/google.ts` trả **409 `account_unverified_conflict`** ⇒ không có đường vào. **Đã fix `a6490c3`:** Google takeover account chưa verify — set `google_sub`, `email_verified=1`, `password_hash=NULL` + audit `google_takeover_unverified` (`auth/google.ts:272`); cần verify live bằng 1 user Google trên account unverified trước cutover. **Fix chuẩn:** flow verify email + login yêu cầu `email_verified=1 OR provider='google'`; **cảnh báo:** bật “bắt buộc verify trước login” ngay sẽ khoá toàn bộ user email/password hiện có (register luôn set 0) ⇒ phải grand-father trước.
 - **[P2 — chưa fix] Username collision trả 500:** register chỉ bắt UNIQUE `users.email` (`routes.ts:166-170`); `profiles.username` UNIQUE mà username = local-part email ⇒ trùng → rơi vào catch-all **500 `register_failed`** thay vì **409**. (`/signup` và `/register` đã **share bucket** `auth:register` — mục này không còn.)
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
 - **[P0 → MITIGATED + hardening DONE 10:45, `f430123`] Bypass rate-limit qua XFF/origin:** cloudflared trong container; app tự bind `127.0.0.1` khi có `TUNNEL_TOKEN` (WARNING nếu không loopback), supervisor backoff 1s→30s/reset 60s, `TRUSTED_PROXIES=127.0.0.1`; origin **connection refused** từ ngoài, domain 200, XFF spoof → 429. Fragility IP ISP hết. **Còn nợ docs:** `.env.example` thiếu `HOST`/`TUNNEL_TOKEN` + comment `TRUSTED_PROXIES` còn IP host cũ (dev cập nhật). **Vantage:** tiêu chí `"success":true` count = 0 qua fetcher ngoài, không phải `grep untrusted_proxy`.
@@ -226,17 +228,19 @@ node --test test/ws-client.test.ts    # dùng package `ws` (Phase 2 được duy
 ### Deliverables
 1. `scripts/migrate-supabase.mjs`: đọc Supabase **read-only** (service role, `--dry-run` mặc định), xuất JSON snapshot; import vào SQLite theo thứ tự FK; `--apply` mới ghi; idempotent (`UPSERT` theo PK).
 2. Mapping kiểu: uuid→TEXT, timestamptz→ISO UTC, jsonb/text[]→JSON text, boolean→0/1; `auth.users` → `users` (giữ `id`, email; password Supabase không migrate được → user phải reset mật khẩu hoặc dùng Google).
-3. Kiểm chứng: script so sánh `count(*)` từng bảng (Supabase vs SQLite), checksum 3 cột định danh, báo cáo lệch.
-4. Cutover frontend: **8 file còn import shim** `@/lib/supabase` (shim ném lỗi khi dùng) phải chuyển sang `@/lib/backend` + `useRealtime` (WS): `CommentSection`, `Profile`, `CollectionsPage`, `AdminDashboard`, `ActivityFeed`, `PersonalLibrary`, `RecommendedForYou`, `SuggestEditModal`. Ưu tiên đúng thứ tự trên. Sau đó xoá `src/lib/supabase.ts`, bỏ `@supabase/supabase-js` khỏi `package.json` và bỏ entry `'supabase'` trong `manualChunks` (`vite.config.ts:25`).
+3. Kiểm chứng: script so sánh `count(*)` từng bảng (Supabase vs SQLite), checksum 3 cột định danh, báo cáo lệch. **G3 DONE (11:55)** trên bản copy: `insert 0/skip 4-6`, counts `users 4 · profiles 4 · favorites 4 · library 2 · comments 2 · quests 6`, FK check rỗng, exit 0.
+4. Cutover frontend: **còn 3 file import shim** `@/lib/supabase` (shim ném lỗi khi dùng) phải chuyển sang `@/lib/backend` + `useRealtime` (WS): `CommentSection`, `PersonalLibrary`, `Profile` (đã xong `SuggestEditModal`, `RecommendedForYou`, `ActivityFeed`, `CollectionsPage`, `AdminDashboard`). Ưu tiên đúng thứ tự trên; test live từng trang. Sau đó xoá `src/lib/supabase.ts`, bỏ `@supabase/supabase-js` khỏi `package.json` và bỏ entry `'supabase'` trong `manualChunks` (`vite.config.ts:25`).
 5. **Gỡ Supabase phía server** (2 file còn lại): `server/lib/translate.ts`, `server/routes/admin.ts` (đã port ở Phase 1), `server/lib/`/`server/routes/` còn lại, `api/index.ts`, `scripts/prerender.ts`, `vercel.json` — quyết định xoá `server/`+`api/` hay trỏ Vercel sang `server-v2`. Kiểm: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng.
 6. Feature flag `VITE_BACKEND=supabase|v2` để rollback tức thời; runbook cutover + rollback trong `docs/migration/CUTOVER.md`.
 7. Backup: copy `data/app.db` + WAL trước mỗi lần import; giữ bản Supabase read-only ít nhất 30 ngày.
 
 ### Acceptance criteria
-- [ ] `node scripts/migrate-supabase.mjs --dry-run` in bảng so sánh, **không ghi** DB.
+- [x] **G3 DONE:** `import-supabase.ts` trên bản copy → insert 0/skip 4-6, counts giữ nguyên, FK check rỗng, exit 0.
+- [x] **G6 DONE:** backup `/root/backups/tsuki-20261102-115508/` (app.db 774.144B + 13 media + ptero.env + SHA256SUMS 15 dòng, 3.9MB).
+- [x] **G7 DONE:** restore rehearsal trên `/tmp/restore-test` — health 200, comments=2, profile 200, media 200, PORT_FREE.
 - [ ] Sau `--apply`: `count(*)` 24/24 bảng khớp Supabase (ghi rõ số từng bảng vào log).
 - [ ] 10 spot-check ngẫu nhiên (id, created_at, quan hệ FK) khớp.
-- [ ] Frontend: `grep -rln "lib/supabase" src/ | grep -v "src/lib/supabase.ts" | wc -l` → **0** (hiện 8); xoá `src/lib/supabase.ts`; bỏ dep `@supabase/supabase-js`; bỏ `manualChunks` entry `'supabase'`; `wc -c dist/assets/supabase-*.js` ≈ **0 byte** (chunk rỗng vẫn tồn tại — không dùng “0 file”); `grep -l "GoTrueClient\|PostgrestClient\|supabase.co" dist/assets/*.js` → rỗng.
+- [ ] Frontend: `grep -rln "lib/supabase" src/ | grep -v "src/lib/supabase.ts" | wc -l` → **0** (hiện **3**); xoá `src/lib/supabase.ts`; bỏ dep `@supabase/supabase-js`; bỏ `manualChunks` entry `'supabase'`; `wc -c dist/assets/supabase-*.js` ≈ **0 byte** (chunk rỗng vẫn tồn tại — không dùng “0 file”); `grep -l "GoTrueClient\|PostgrestClient\|supabase.co" dist/assets/*.js` → rỗng.
 - [ ] Runtime: mở **Profile**, **CommentSection**, **CollectionsPage**, **AdminDashboard**, **ActivityFeed** — không còn throw `[supabase] đã bị loại bỏ`.
 - [ ] Server: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng (2 file hiện có: `server/routes/admin.ts`, `server/lib/translate.ts`).
 - [ ] Rollback: bật `VITE_BACKEND=supabase` → app cũ chạy lại; đã thử 1 lần và ghi log.

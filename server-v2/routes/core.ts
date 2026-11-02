@@ -344,6 +344,13 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     ok(res, { items: rows, limit, offset });
   }));
 
+  /** GET /api/collections/liked - ids the caller liked (before :id route). */
+  r.get('/collections/liked', requireAuthMw, h((req, res) => {
+    const rows = db.prepare('select collection_id from collection_likes where user_id = ?')
+      .all(req.auth?.userId) as Array<{ collection_id: string }>;
+    ok(res, { ids: rows.map((r) => r.collection_id) });
+  }));
+
   r.get('/collections/:id', optionalAuthMw, h((req, res) => {
     const row = canRead(req.params.id, auth(req));
     if (!row) return fail(res, 404, 'not_found');

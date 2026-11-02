@@ -20,7 +20,7 @@ import AuthModal from '@/components/AuthModal'
 import ReloadLink from '@/components/ReloadLink'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, library as libraryApi } from '@/lib/backend'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -489,33 +489,23 @@ export default function PersonalLibrary() {
 
   // ── Load library from Supabase ──
   const loadLibrary = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) {
+    if (!user || !API_READY) {
       setLoading(false)
       return
     }
     setLoading(true)
     setError(null)
     try {
-      const { data, error: dbError } = await supabase
-        .from('user_library')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false })
-
-      if (dbError) throw dbError
-      setEntries((data as LibraryEntry[]) ?? [])
+      const res = await libraryApi.list()
+      setEntries(((res.items ?? []) as unknown as LibraryEntry[]).slice())
     } catch (err: any) {
       console.error('[PersonalLibrary] load failed', err)
       // Friendly hint when the table doesn't exist yet (RLS-blocked or not migrated).
-      const code = err?.code as string | undefined
+      const code = (err as { code?: string })?.code
       const friendly =
-        code === '42P01'
-          ? lang === 'vi'
-            ? 'Bảng user_library chưa tồn tại trên Supabase. Hãy mở Supabase → SQL Editor và chạy file supabase/setup_all.sql.'
-            : 'The user_library table is missing on Supabase. Open Supabase → SQL Editor and run supabase/setup_all.sql.'
-          : lang === 'vi'
-            ? `Không thể tải thư viện (${code ?? 'lỗi'}). ${err?.message ?? ''}`
-            : `Failed to load library (${code ?? 'error'}). ${err?.message ?? ''}`
+        lang === 'vi'
+          ? `Không thể tải thư viện (${code ?? 'lỗi'}). ${err instanceof Error ? err.message : ''}`
+          : `Failed to load library (${code ?? 'error'}). ${err instanceof Error ? err.message : ''}`
       setError(friendly)
     } finally {
       setLoading(false)
@@ -530,29 +520,30 @@ export default function PersonalLibrary() {
   // ── CRUD operations ──
   const handleSave = async (entryId: string, updates: Partial<LibraryEntry>) => {
     if (!user) return
-    const { error: dbError } = await supabase
-      .from('user_library')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', entryId)
-      .eq('user_id', user.id)
-
-    if (!dbError) {
-      setEntries((prev) =>
-        prev.map((e) => (e.id === entryId ? { ...e, ...updates } : e)),
-      )
+    const target = entries.find((e) => e.id === entryId)
+    if (!target) return
+    try {
+      await libraryApi.update(target.anime_id, {
+        ...(updates.status ? { status: updates.status } : {}),
+        ...(updates.current_episode !== undefined ? { current_episode: updates.current_episode } : {}),
+        ...(updates.score !== undefined ? { score: updates.score } : {}),
+        ...(updates.notes !== undefined ? { notes: updates.notes } : {}),
+      })
+      setEntries((prev) => prev.map((e) => (e.id === entryId ? { ...e, ...updates } : e)))
+    } catch (err) {
+      console.warn('[PersonalLibrary] save failed', err)
     }
   }
 
   const handleDelete = async (entryId: string) => {
     if (!user) return
-    const { error: dbError } = await supabase
-      .from('user_library')
-      .delete()
-      .eq('id', entryId)
-      .eq('user_id', user.id)
-
-    if (!dbError) {
+    const target = entries.find((e) => e.id === entryId)
+    if (!target) return
+    try {
+      await libraryApi.remove(target.anime_id)
       setEntries((prev) => prev.filter((e) => e.id !== entryId))
+    } catch (err) {
+      console.warn('[PersonalLibrary] delete failed', err)
     }
   }
 
@@ -661,15 +652,15 @@ export default function PersonalLibrary() {
     )
   }
 
-  // ── Supabase not configured ──
-  if (!isSupabaseConfigured) {
+  // ── API not configured ──
+  if (!API_READY) {
     return (
       <Layout>
         <div className="container mx-auto max-w-2xl px-4 py-20">
           <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-6 text-yellow-100">
             {lang === 'vi'
-              ? 'Supabase chưa được cấu hình. Tính năng thư viện cá nhân chưa khả dụng.'
-              : 'Supabase is not configured. Personal library feature is unavailable.'}
+              ? 'API chưa được cấu hình. Tính năng thư viện cá nhân chưa khả dụng.'
+              : 'API is not configured. Personal library feature is unavailable.'}
           </div>
         </div>
       </Layout>

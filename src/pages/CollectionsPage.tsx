@@ -9,7 +9,7 @@ import AuthModal from '@/components/AuthModal'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { useToast } from '@/providers/ToastProvider'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, collections as collectionsApi } from '@/lib/backend'
 import { queryKeys } from '@/lib/queryClient'
 
 type Collection = {
@@ -41,43 +41,28 @@ export default function CollectionsPage() {
 
   const { data: collections = [], isLoading } = useQuery({
     queryKey: queryKeys.collectionList(tab),
-    enabled: isSupabaseConfigured && (tab === 'public' || Boolean(user)),
+    enabled: API_READY && (tab === 'public' || Boolean(user)),
     queryFn: async (): Promise<Collection[]> => {
-      let query = supabase.from('collections').select('*').limit(50)
-      if (tab === 'public') {
-        query = query.eq('is_public', true).order('like_count', { ascending: false })
-      } else if (user) {
-        query = query.eq('user_id', user.id).order('updated_at', { ascending: false })
-      }
-      const { data, error } = await query
-      if (error) throw error
-      return (data as Collection[]) ?? []
+      const res = await collectionsApi.list({ mine: tab === 'mine', limit: 50 })
+      return ((res.items ?? []) as unknown as Collection[]).slice()
     },
   })
 
   const { data: myLikes = new Set<string>() } = useQuery({
     queryKey: ['my-collection-likes', user?.id],
-    enabled: Boolean(user && isSupabaseConfigured),
+    enabled: Boolean(user && API_READY),
     queryFn: async (): Promise<Set<string>> => {
       if (!user) return new Set()
-      const { data } = await supabase
-        .from('collection_likes')
-        .select('collection_id')
-        .eq('user_id', user.id)
-      return new Set((data ?? []).map((r: any) => r.collection_id))
+      const res = await collectionsApi.likedIds()
+      return new Set(res.ids ?? [])
     },
   })
 
   const createMutation = useMutation({
     mutationFn: async (title: string) => {
       if (!user) throw new Error('not signed in')
-      const { data, error } = await supabase
-        .from('collections')
-        .insert({ user_id: user.id, title, is_public: true })
-        .select()
-        .single()
-      if (error) throw error
-      return data as Collection
+      const res = await collectionsApi.create({ title, is_public: true })
+      return res.collection as unknown as Collection
     },
     onSuccess: () => {
       setNewTitle('')
@@ -94,9 +79,9 @@ export default function CollectionsPage() {
     mutationFn: async ({ id, liked }: { id: string; liked: boolean }) => {
       if (!user) throw new Error('not signed in')
       if (liked) {
-        await supabase.from('collection_likes').delete().eq('collection_id', id).eq('user_id', user.id)
+        await collectionsApi.unlike(id)
       } else {
-        await supabase.from('collection_likes').insert({ collection_id: id, user_id: user.id })
+        await collectionsApi.like(id)
       }
     },
     onMutate: async ({ id, liked }) => {

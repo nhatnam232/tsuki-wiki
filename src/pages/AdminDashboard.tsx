@@ -9,7 +9,7 @@ import AdminPasswordGate from '@/components/AdminPasswordGate'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { useToast } from '@/providers/ToastProvider'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, editSuggestions } from '@/lib/backend'
 import { isModerator } from '@/lib/badges'
 import { queryKeys } from '@/lib/queryClient'
 
@@ -55,17 +55,11 @@ function AdminDashboardInner() {
 
   const pendingQ = useQuery({
     queryKey: queryKeys.pendingEdits(),
-    enabled: allowed && isSupabaseConfigured,
+    enabled: allowed && API_READY,
     staleTime: 30_000,
     queryFn: async (): Promise<Suggestion[]> => {
-      const { data, error } = await supabase
-        .from('anime_edit_suggestions')
-        .select('*')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: true })
-        .limit(100)
-      if (error) throw error
-      return (data as Suggestion[]) ?? []
+      const res = await editSuggestions.pending()
+      return ((res.items ?? []) as unknown as Suggestion[])
     },
   })
 
@@ -79,10 +73,8 @@ function AdminDashboardInner() {
       action: 'approve' | 'reject'
       note?: string
     }) => {
-      // Use the Postgres functions which enforce permission server-side.
-      const fn = action === 'approve' ? 'approve_edit' : 'reject_edit'
-      const { error } = await supabase.rpc(fn, { suggestion_id: id, note })
-      if (error) throw error
+      // server-v2 enforce quyền mod/owner + ghi audit_logs phía server.
+      await editSuggestions.review(id, action === 'approve' ? 'approved' : 'rejected', note)
     },
     onMutate: async ({ id }) => {
       const key = queryKeys.pendingEdits()

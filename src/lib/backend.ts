@@ -301,6 +301,7 @@ export const collections = {
     post<{ success: boolean }>('/collections/' + id + '/items', { anime_id: animeId }),
   removeItem: (id: string, animeId: number) =>
     del<{ success: boolean }>('/collections/' + id + '/items/' + animeId),
+  likedIds: () => get<{ success: boolean; ids: string[] }>('/collections/liked'),
   like: (id: string) =>
     post<{ success: boolean; like_count: number }>('/collections/' + id + '/like'),
   unlike: (id: string) =>
@@ -347,8 +348,8 @@ export const editSuggestions = {
   }) => post<{ success: boolean; suggestion: unknown }>('/edit-suggestions', input),
   mine: () => get<{ success: boolean; items: unknown[] }>('/edit-suggestions'),
   pending: () => get<{ success: boolean; items: unknown[] }>('/edit-suggestions', { scope: 'mod' }),
-  review: (id: string, decision: 'approve' | 'reject') =>
-    patch<{ success: boolean }>('/edit-suggestions/' + id, { decision }),
+  review: (id: string, status: 'approved' | 'rejected', note?: string) =>
+    patch<{ success: boolean }>('/edit-suggestions/' + id, { status, note }),
 }
 
 export const compareHistory = {
