@@ -106,10 +106,19 @@ export type Profile = {
 }
 
 export const auth = {
-  login: (email: string, password: string) =>
-    post<{ success: boolean; user: SessionUser }>('/auth/login', { email, password }),
-  register: (email: string, password: string, username: string) =>
-    post<{ success: boolean; user: SessionUser }>('/auth/register', { email, password, username }),
+  login: (email: string, password: string, captchaToken?: string) =>
+    post<{ success: boolean; user: SessionUser }>('/auth/login', {
+      email,
+      password,
+      ...(captchaToken ? { captchaToken } : {}),
+    }),
+  register: (email: string, password: string, username: string, captchaToken?: string) =>
+    post<{ success: boolean; user: SessionUser }>('/auth/register', {
+      email,
+      password,
+      username,
+      ...(captchaToken ? { captchaToken } : {}),
+    }),
   logout: () => post<{ success: boolean }>('/auth/logout'),
   refresh: () => post<{ success: boolean; user: SessionUser }>('/auth/refresh'),
   me: () => get<{ success: boolean; user: SessionUser; profile: Profile | null }>('/auth/me'),

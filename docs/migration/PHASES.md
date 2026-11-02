@@ -25,8 +25,9 @@
 | `e7c8930` | feat(api): media upload, favorites count, single library entry |
 | `2cd3138` | feat(web): drop supabase-js from auth layer, use backend client |
 | `8fd61a6` | feat(web): migrate likes, library button, quests and notifications to the API (G4 đang chạy) |
+| `52e8dcc` | chore(web): drop unused captchaToken param name after auth migration |
 
-`main` **ahead `origin/main` 14 commit**, chưa push (mới nhất `8fd61a6`). Tại thời điểm planner kiểm 11:30: `git status` **sạch**; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **ahead `origin/main` 15 commit**, chưa push (mới nhất `52e8dcc`). Tại thời điểm planner kiểm 11:38: working tree có thay đổi của dev (`server-v2/auth/routes.ts`, `src/lib/backend.ts`, `src/providers/AuthProvider.tsx`, `?? server-v2/auth/captcha.ts`); `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 

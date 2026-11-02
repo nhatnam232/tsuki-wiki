@@ -1,4 +1,5 @@
 import { clientIpOf } from '../middleware/security';
+import { verifyCaptcha } from './captcha';
 /**
  * Auth routes — Phase 0 / Slice 2.
  *
@@ -124,6 +125,15 @@ export function createAuthRouter(db: Db, options: AuthRouterOptions = {}): Route
         return;
       }
 
+      const captcha = await verifyCaptcha(
+        body.captchaToken ?? body.captcha_token,
+        clientIpOf(req)
+      );
+      if (!captcha.ok) {
+        res.status(400).json({ success: false, error: captcha.reason ?? 'captcha_failed' });
+        return;
+      }
+
       if (selectUserByEmail(db, email)) {
         res.status(409).json({ success: false, error: 'email_taken' });
         return;
@@ -192,6 +202,15 @@ export function createAuthRouter(db: Db, options: AuthRouterOptions = {}): Route
 
       if (!email || password.length === 0) {
         res.status(400).json({ success: false, error: 'invalid_credentials_input' });
+        return;
+      }
+
+      const captcha = await verifyCaptcha(
+        body.captchaToken ?? body.captcha_token,
+        clientIpOf(req)
+      );
+      if (!captcha.ok) {
+        res.status(400).json({ success: false, error: captcha.reason ?? 'captcha_failed' });
         return;
       }
 

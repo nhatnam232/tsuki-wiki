@@ -149,9 +149,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signInWithEmail = useCallback(async (email: string, password: string, captchaToken?: string) => {
-    void captchaToken
     try {
-      await authApi.login(email, password)
+      await authApi.login(email, password, captchaToken)
       return {}
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'login_failed' }
@@ -159,10 +158,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signUpWithEmail = useCallback(
-    async (email: string, password: string, displayName?: string, _captchaToken?: string) => {
+    async (email: string, password: string, displayName?: string, captchaToken?: string) => {
       void displayName
       try {
-        await authApi.register(email, password, email.split('@')[0] ?? 'user')
+        await authApi.register(email, password, email.split('@')[0] ?? 'user', captchaToken)
         return { needsConfirmation: false }
       } catch (err) {
         return { error: err instanceof Error ? err.message : 'register_failed' }
