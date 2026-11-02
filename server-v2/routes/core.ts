@@ -10,6 +10,7 @@ import { optionalAuth, requireAuth, requireRole, type AuthContext } from '../mid
 import { bumpQuestProgress } from '../services/quests';
 import { PROFILE_JSON, normalizeRow } from '../lib/json';
 import { broadcastActivity, broadcastComment } from '../ws/server';
+import { notifyCommentReply } from '../services/notifications';
 
 type Row = Record<string, unknown>;
 const ok = (res: Response, body: Row, status = 200) => res.status(status).json({ success: true, ...body });
@@ -224,6 +225,13 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
       values (?,?,?,?,?,?,0,?,?) returning *`)
       .get(a?.userId, entityType, entityId, str(body.parentId) ?? null, text, str(body.imageUrl) ?? null, nowIso(), nowIso()) as Row;
     safeHook(() => bumpQuestProgress(db, a!.userId, 'comments_posted', 1));
+    const parentId = str(body.parentId);
+    if (parentId) {
+      safeHook(() => notifyCommentReply(db, {
+        parentId, actorId: a!.userId, commentId: String(row.id),
+        entityType, entityId, excerpt: text,
+      }));
+    }
     safeHook(() => broadcastComment(entityType, entityId, 'new', {
       id: row.id, entityType, entityId, actor: a?.userId ?? null, createdAt: row.created_at,
     }));

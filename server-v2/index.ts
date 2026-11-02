@@ -8,6 +8,7 @@ import { envLoadResult, resolvePort } from './lib/env'; // PHẢI import đầu 
 import { createApp } from './app';
 import { closeDb, currentDbPath, getDb, isWalEnabled } from './db/index';
 import { attachWebSocket, closeWebSocket } from './ws/server';
+import { startMalWorker } from './services/malWorker';
 
 const PORT = resolvePort(); // PORT → SERVER_PORT (Pterodactyl) → 4000
 
@@ -26,6 +27,7 @@ function main(): void {
   });
 
   attachWebSocket(server, db);
+  startMalWorker(db);
 
   const shutdown = (signal: string): void => {
     process.stderr.write(`[server-v2] ${signal} received, shutting down\n`);

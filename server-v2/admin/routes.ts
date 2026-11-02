@@ -59,6 +59,15 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
 
   const rotateHandler = (req: Request, res: Response): void => {
     void (async () => {
+      // [P1] Gate TLS phải chạy TRƯỚC transaction: nếu trả 409 sau khi ghi thì
+      // mật khẩu mới bị vứt và mất vĩnh viễn (cron HTTP không webhook).
+      const webhookConfigured = Boolean(process.env.ADMIN_PASSWORD_WEBHOOK);
+      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      if (!webhookConfigured && !isHttps) {
+        res.status(409).json({ success: false, rotated: false, error: 'tls_required_for_plaintext' });
+        return;
+      }
+
       const password = (await import('node:crypto')).randomBytes(PASSWORD_BYTES).toString('base64url');
       const passwordHash = await hashPassword(password);
       const today = todayIso();
@@ -87,22 +96,15 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
       })();
 
       // Có webhook → gửi Discord, KHÔNG trả plaintext qua HTTP.
-      // Không có webhook → trả plaintext nhưng cảnh báo chỉ dùng qua TLS.
+      // Không có webhook → trả plaintext (đã qua gate TLS ở đầu handler).
       // Cả 2 nhánh đều KHÔNG log plaintext.
-      const webhookConfigured = Boolean(process.env.ADMIN_PASSWORD_WEBHOOK);
-      const webhookSent = webhookConfigured
-        ? await notifyDiscord(`Admin password ${today} rotated`, `Mật khẩu mới: ||${password}||`)
-        : false;
-
-      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-      if (!webhookConfigured && !isHttps) {
-        // Không có webhook + HTTP: plaintext bay qua mạng → từ chối, không trả password.
-        res.status(409).json({ success: false, error: 'tls_required_for_plaintext', rotated: true, validForDate: today });
-        return;
-      }
-
       if (webhookConfigured) {
-        res.status(200).json({ success: true, validForDate: today, rotated: true, webhook_sent: webhookSent });
+        const webhookSent = await notifyDiscord(`Admin password ${today} rotated`, `Mật khẩu mới: ||${password}||`);
+        if (!webhookSent) {
+          res.status(502).json({ success: false, rotated: true, webhook_sent: false, error: 'webhook_failed' });
+          return;
+        }
+        res.status(200).json({ success: true, validForDate: today, rotated: true, webhook_sent: true });
         return;
       }
       res.status(200).json({

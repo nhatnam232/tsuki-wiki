@@ -66,6 +66,18 @@ export function corsWhitelist(req: Request, res: Response, next: NextFunction): 
  * Kết hợp với `SameSite=Lax` trên cookie: POST cross-site của trình duyệt sẽ
  * không gửi cookie → lớp thứ hai.
  */
+/**
+ * Chỉ cho traffic đi qua Cloudflare. Bật bằng REQUIRE_CF_HEADER=1.
+ * Lý do: origin IP:port vẫn truy cập trực tiếp được; khi TRUST_PROXY=1 client
+ * gửi X-Forwarded-For giả sẽ spoof được IP và né rate limit.
+ */
+export function requireCloudflare(req: Request, res: Response, next: NextFunction): void {
+  if (process.env.REQUIRE_CF_HEADER !== '1') return next();
+  const cfIp = req.headers['cf-connecting-ip'];
+  if (typeof cfIp === 'string' && cfIp.length > 0) return next();
+  res.status(403).json({ success: false, error: 'cloudflare_required' });
+}
+
 export function requireSameOrigin(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
 

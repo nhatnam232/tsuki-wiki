@@ -17,7 +17,7 @@ import { createAdminRouter } from './admin/routes';
 import { createCoreRouter } from './routes/core';
 import { createExtrasRouter } from './routes/extras';
 import { createMediaRouter } from './media/routes';
-import { corsWhitelist, requireSameOrigin, securityHeaders } from './middleware/security';
+import { corsWhitelist, requireCloudflare, requireSameOrigin, securityHeaders } from './middleware/security';
 
 export interface AppDeps {
   /** Cho phép test inject DB riêng (mặc định lấy singleton). */
@@ -37,6 +37,7 @@ export function createApp(deps: AppDeps = {}): express.Express {
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 
   app.use(securityHeaders);
+  app.use(requireCloudflare);
   app.use(corsWhitelist);
   app.use(express.json({ limit: '100kb' }));
 

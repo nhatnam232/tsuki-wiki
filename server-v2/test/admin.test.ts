@@ -319,11 +319,15 @@ test('rotate-password: có webhook → không trả plaintext; không webhook �
     assert.equal(noHookBody.warning, 'plaintext_over_tls_only');
 
     // HTTP + không webhook → 409 tls_required_for_plaintext
+    const before = h.db.prepare('select count(*) c from admin_passwords').get() as { c: number };
     const httpOnly = await fetch(`${h.base}/api/admin/rotate-password`, { headers: { 'x-cron-secret': process.env.CRON_SECRET as string } });
-    const httpBody = (await httpOnly.json()) as { error?: string; password?: string };
+    const httpBody = (await httpOnly.json()) as { error?: string; password?: string; rotated?: boolean };
     assert.equal(httpOnly.status, 409, 'HTTP không webhook phải 409');
     assert.equal(httpBody.error, 'tls_required_for_plaintext');
+    assert.equal(httpBody.rotated, false, '409 phải trả rotated:false');
     assert.equal(httpBody.password, undefined, 'không được trả plaintext qua HTTP');
+    const after = h.db.prepare('select count(*) c from admin_passwords').get() as { c: number };
+    assert.equal(after.c, before.c, 'DB KHÔNG được đổi khi 409 (không mất mật khẩu)');
 
     // nhánh CÓ webhook (stub fetch để không gọi Discord thật)
     process.env.ADMIN_PASSWORD_WEBHOOK = 'https://discord.test/webhook';

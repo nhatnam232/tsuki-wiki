@@ -78,7 +78,7 @@ test('rotate-password rate limit 10/phút/IP: lần 11 → 429', async () => {
   try {
     const codes: number[] = [];
     for (let i = 0; i < 11; i += 1) {
-      const res = await fetch(`${base}/api/admin/rotate-password`, { headers: { 'x-cron-secret': process.env.CRON_SECRET as string } });
+      const res = await fetch(`${base}/api/admin/rotate-password`, { headers: { 'x-cron-secret': process.env.CRON_SECRET as string, 'x-forwarded-proto': 'https' } });
       codes.push(res.status);
     }
     assert.deepEqual(codes.slice(0, 10), Array(10).fill(200));

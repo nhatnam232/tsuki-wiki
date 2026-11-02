@@ -5,11 +5,11 @@
   "description": "Self-hosted backend for tsuki-wiki (replaces Supabase) — Node 22 + Express + SQLite WAL",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "dev": "tsx watch index.ts",
-    "build": "esbuild index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.cjs --external:better-sqlite3",
+    "build": "esbuild index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/server.cjs --external:better-sqlite3",
     "start": "node dist/server.cjs",
     "test": "for f in test/*.test.ts; do npx tsx --test \"$f\" || exit 1; done",
     "check": "tsc --noEmit"

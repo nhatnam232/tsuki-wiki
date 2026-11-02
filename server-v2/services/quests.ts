@@ -6,6 +6,7 @@
 import type { Db } from '../db/index';
 import { nowIso } from '../lib/time';
 import { grantBadge } from './badges';
+import { notifyQuestComplete } from './notifications';
 
 export interface BumpResult {
   questId: string;
@@ -66,6 +67,8 @@ export function bumpQuestProgress(
         if (quest.badge_reward) {
           if (grantBadge(db, userId, quest.badge_reward)) badgeGranted = quest.badge_reward;
         }
+        const meta = db.prepare('select title from quests where id = ?').get(quest.id) as { title: string } | undefined;
+        notifyQuestComplete(db, { userId, questId: quest.id, title: meta?.title ?? quest.id });
       }
 
       results.push({

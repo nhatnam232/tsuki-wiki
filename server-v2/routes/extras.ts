@@ -8,6 +8,7 @@ import type { Db } from '../db/index';
 import { nowIso } from '../lib/time';
 import { ACTIVITY_JSON, COMPARE_JSON, normalizeRow, normalizeRows } from '../lib/json';
 import { optionalAuth, requireAuth, requireRole, type AuthContext } from '../middleware/requireAuth';
+import { notifyEditDecision } from '../services/notifications';
 
 type Row = Record<string, unknown>;
 const ok = (res: Response, body: Row, status = 200) => res.status(status).json({ success: true, ...body });
@@ -136,6 +137,10 @@ export function createExtrasRouter(db: Db): Router {
         .run(decision, req.auth?.userId, nowIso(), note, req.params.id);
       audit(db, req.auth?.userId ?? null, decision === 'approved' ? 'approve_edit' : 'reject_edit',
         'anime', String(sug.anime_id), note ?? '');
+      notifyEditDecision(db, {
+        suggestionId: String(sug.id), ownerId: String(sug.user_id), status: decision,
+        actorId: req.auth?.userId ?? '', animeId: Number(sug.anime_id),
+      });
     });
     run();
     ok(res, { updated: 1, status: decision });
