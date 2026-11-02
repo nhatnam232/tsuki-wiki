@@ -91,7 +91,7 @@ test('MAL worker: MAL_WORKER=0 tắt timer, mặc định bật và unref', () =
   } finally { close(); }
 });
 
-test('CF gate: REQUIRE_CF_HEADER=1 → thiếu cf-connecting-ip bị 403, có thì 200', async () => {
+test('trusted proxy: spoof header KHÔNG vượt được gate (socket IP quyết định)', async () => {
   const { db, dir, close } = fresh();
   resetRateLimits();
   const app = createApp({ db, disableRateLimit: true });
@@ -99,20 +99,89 @@ test('CF gate: REQUIRE_CF_HEADER=1 → thiếu cf-connecting-ip bị 403, có th
   const { port } = server.address() as AddressInfo;
   const base = `http://127.0.0.1:${port}`;
   try {
-    process.env.REQUIRE_CF_HEADER = '1';
-    const blocked = await fetch(`${base}/api/health`);
-    assert.equal(blocked.status, 403);
-    assert.equal(((await blocked.json()) as { error: string }).error, 'cloudflare_required');
+    process.env.TRUSTED_PROXIES = '116.66.214.191';
+    const spoof = await fetch(`${base}/api/health`, { headers: { 'cf-connecting-ip': '1.2.3.4', 'x-forwarded-for': '1.2.3.4' } });
+    assert.equal(spoof.status, 403, 'socket IP 127.0.0.1 không nằm trong TRUSTED_PROXIES → 403');
+    assert.equal(((await spoof.json()) as { error: string }).error, 'untrusted_proxy');
 
-    const throughCf = await fetch(`${base}/api/health`, { headers: { 'cf-connecting-ip': '203.0.113.9' } });
-    assert.equal(throughCf.status, 200);
+    process.env.TRUSTED_PROXIES = '127.0.0.1';
+    assert.equal((await fetch(`${base}/api/health`)).status, 200, 'socket IP tin cậy → 200');
 
-    delete process.env.REQUIRE_CF_HEADER;
-    assert.equal((await fetch(`${base}/api/health`)).status, 200, 'tắt env → không chặn');
+    process.env.TRUSTED_PROXIES = '10.0.0.0/8';
+    assert.equal((await fetch(`${base}/api/health`)).status, 403, 'CIDR không khớp → 403');
+    process.env.TRUSTED_PROXIES = '127.0.0.0/8';
+    assert.equal((await fetch(`${base}/api/health`)).status, 200, 'CIDR khớp → 200');
+
+    process.env.ALLOW_DIRECT = '1';
+    process.env.TRUSTED_PROXIES = '116.66.214.191';
+    assert.equal((await fetch(`${base}/api/health`)).status, 200, 'ALLOW_DIRECT=1 → bỏ qua');
+    delete process.env.ALLOW_DIRECT;
+    delete process.env.TRUSTED_PROXIES;
+    assert.equal((await fetch(`${base}/api/health`)).status, 200, 'không set env → không chặn');
   } finally {
-    delete process.env.REQUIRE_CF_HEADER;
+    delete process.env.TRUSTED_PROXIES;
+    delete process.env.ALLOW_DIRECT;
     await new Promise<void>((r) => server.close(() => r()));
     void dir;
     close();
   }
+});
+
+
+test('/api/health/deep chỉ owner: anon 401, user thường 403, owner 200', async () => {
+  const { db, close } = fresh();
+  process.env.JWT_SECRET = 'svc-secret-0123456789abcdef0123456789';
+  resetRateLimits();
+  const app = createApp({ db, disableRateLimit: true });
+  const server: Server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    assert.equal((await fetch(`${base}/api/health/deep`)).status, 401, 'anon 401');
+
+    db.prepare(`update profiles set badges='["mod"]' where id='uA'`).run();
+    const { signAccessToken } = await import('../crypto/jwt');
+    const sess = db.prepare(`insert into sessions (id,user_id,token_hash,expires_at) values ('sA','uA','h1',?) returning id`)
+      .get(new Date(Date.now() + 3600_000).toISOString()) as { id: string };
+    const modToken = signAccessToken({ sub: 'uA', sid: sess.id });
+    assert.equal((await fetch(`${base}/api/health/deep`, { headers: { cookie: `tsuki_at=${modToken}` } })).status, 403, 'mod 403');
+
+    db.prepare(`update profiles set badges='["owner"]' where id='uA'`).run();
+    const { invalidateRoleCache } = await import('../middleware/requireAuth');
+    invalidateRoleCache();
+    const owner = await fetch(`${base}/api/health/deep`, { headers: { cookie: `tsuki_at=${modToken}` } });
+    assert.equal(owner.status, 200, 'owner 200');
+    const body = (await owner.json()) as Record<string, unknown>;
+    assert.equal(body.wal, true);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    close();
+  }
+});
+
+test('rateLimit: 60k key không làm request cuối chậm (không prune O(N) hot path)', async () => {
+  const { rateLimit } = await import('../middleware/rateLimit');
+  const limiter = rateLimit({ name: 'perf', windowMs: 60_000, max: 5, keyGenerator: (req) => String(req.headers['x-k'] ?? 'k') });
+  const req = { headers: { 'x-k': 'k' }, ip: '127.0.0.1' } as never;
+  let status = 0;
+  let ended = false;
+  const res = {
+    setHeader: () => undefined,
+    status: (code: number) => { status = code; return res; },
+    json: () => { ended = true; return res; },
+  } as never;
+
+  const { resetRateLimits } = await import('../middleware/rateLimit');
+  resetRateLimits();
+  // nhồi 60k key trực tiếp qua limiter với key khác nhau
+  for (let i = 0; i < 60_000; i += 1) {
+    (req as { headers: Record<string, string> }).headers['x-k'] = `k${i}`;
+    limiter(req, res, () => undefined);
+  }
+  (req as { headers: Record<string, string> }).headers['x-k'] = 'final';
+  const started = Date.now();
+  limiter(req, res, () => undefined);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 50, `request cuối phải < 50ms, thực tế ${elapsed}ms`);
+  void status; void ended;
 });

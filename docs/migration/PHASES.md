@@ -5,7 +5,7 @@
 > Mọi estimate là **ngày công của 1 dev quen repo**.
 > **Zero new dependency ở Phase 0–1** (chốt với Lead): dùng `node:crypto` (scrypt + HMAC-SHA256 JWT), `better-sqlite3`, `express`, `node --test`. Rate-limit chạy in-memory. Không cài `argon2`/`bcrypt`/`jose`/`google-auth-library`/`express-rate-limit`/`csrf-csrf`/`zod`. Phase 2 có thể cần `ws` (server WS) — **xin duyệt riêng**, không thuộc zero-dep P0–P1.
 
-> **Runtime production = Ptero `nodejs_20` (không phải 22).** Hệ quả: KHÔNG dùng module `node:sqlite` (chỉ có từ Node 22); dùng `better-sqlite3` prebuilt (kiểm ABI bằng `npm rebuild better-sqlite3` nếu panel build khác arch). **Lưu ý:** `package.json` đang `engines >=22` và esbuild `--target=node22` — lệch với nodejs_20 của Ptero, cần nâng panel lên Node 22 hoặc hạ target/engines về node20 trước khi deploy; `fetch` (Node 18+) và `node --test` (Node 18+) có sẵn; WebSocket **client** toàn cục chỉ có từ Node 21/22 → Phase 2 dùng package `ws` hoặc `--experimental-websocket`.
+> **Runtime production = Ptero `nodejs_20` (không phải 22).** Hệ quả: KHÔNG dùng module `node:sqlite` (chỉ có từ Node 22); dùng `better-sqlite3` prebuilt (kiểm ABI bằng `npm rebuild better-sqlite3` nếu panel build khác arch). **Đã khớp:** dev hạ `engines >=20.0.0` + esbuild `--target=node20` (bundle deploy 09:48:58, live `node v20.20.2`, `better-sqlite3` load OK) ⇒ hết lệch runtime; `fetch` (Node 18+) và `node --test` (Node 18+) có sẵn; WebSocket **client** toàn cục chỉ có từ Node 21/22 → Phase 2 dùng package `ws` hoặc `--experimental-websocket`.
 
 ## Mốc commit (local, chưa push)
 
@@ -172,6 +172,9 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - 73 policy nhưng nhiều policy trùng logic (own/read-all) → gom helper, tránh copy-paste 73 lần; test vẫn phải đủ 73 case để không mất dấu.
 - Trigger counter + soft delete dễ lệch khi update nhiều lần `is_deleted` → test toggle 2 chiều.
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
+- **[P1 — hạ tầng, chưa sửa code] `TRUST_PROXY=1` + origin public = bypass rate-limit:** production đang `TRUST_PROXY=1` trong khi origin `http://103.69.75.49:25200` **vẫn mở** (health 200). Bằng chứng đúng (curl không gửi `Origin`, XFF xoay): origin `POST /api/auth/signup` ×12 → **400×12, không 429**; qua domain CF ×12 → **400×10 rồi 429** (request có `Origin` lạ bị CSRF 403 trước limiter, **không** phải bằng chứng bypass); 55.000 request với XFF ngẫu nhiên làm giảm 1.800 → 34 req/s (nguyên nhân: `middleware/rateLimit.ts:56` prune O(N) mọi request khi >50k key). Fix: (1) đóng origin — tunnel trỏ `127.0.0.1:PORT` hoặc firewall chỉ dải IP Cloudflare; (2) `trust proxy` phải là **allowlist dải CF**, không phải số hop `1` (`app.ts:37`); (3) bỏ prune O(N) khỏi hot path, cap cứng/clear khi vượt trần. Hệ quả phụ: origin mở ⇒ attacker tự set `x-forwarded-proto: https` ⇒ nhánh rotate “HTTPS → trả plaintext” bị kích hoạt qua HTTP ⇒ **phải đóng origin trước khi bật rotate production**.
+- **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
+- **[P2] Google OAuth production đang 503 `oauth_not_configured`** — cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu muốn parity với Supabase trước cutover.
 
 ---
 

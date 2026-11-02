@@ -13,11 +13,12 @@ import type { Db } from './db/index';
 import { basename } from 'node:path';
 import { currentDbPath, getDb, isWalEnabled, ping } from './db/index';
 import { createAuthRouter } from './auth/routes';
+import { requireAuth, requireRole } from './middleware/requireAuth';
 import { createAdminRouter } from './admin/routes';
 import { createCoreRouter } from './routes/core';
 import { createExtrasRouter } from './routes/extras';
 import { createMediaRouter } from './media/routes';
-import { corsWhitelist, requireCloudflare, requireSameOrigin, securityHeaders } from './middleware/security';
+import { corsWhitelist, requireSameOrigin, requireTrustedProxy, securityHeaders, trustedProxies } from './middleware/security';
 
 export interface AppDeps {
   /** Cho phép test inject DB riêng (mặc định lấy singleton). */
@@ -34,10 +35,13 @@ export function createApp(deps: AppDeps = {}): express.Express {
   const db = deps.db ?? getDb();
 
   app.disable('x-powered-by');
-  if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+  // trust proxy: ưu tiên TRUSTED_PROXIES (IP/CIDR), giữ TRUST_PROXY=1 cho config cũ.
+  const proxies = trustedProxies();
+  if (proxies.length > 0) app.set('trust proxy', proxies);
+  else if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 
   app.use(securityHeaders);
-  app.use(requireCloudflare);
+  app.use(requireTrustedProxy);
   app.use(corsWhitelist);
   app.use(express.json({ limit: '100kb' }));
 
@@ -60,7 +64,8 @@ export function createApp(deps: AppDeps = {}): express.Express {
     }
   });
 
-  app.get('/api/health/deep', (_req: Request, res: Response) => {
+  // Health sâu (node/dbFile/uptime) → chỉ owner xem, không public.
+  app.get('/api/health/deep', requireAuth(db), requireRole('owner'), (_req: Request, res: Response) => {
     try {
       const ok = ping(db);
       res.status(ok ? 200 : 503).json({

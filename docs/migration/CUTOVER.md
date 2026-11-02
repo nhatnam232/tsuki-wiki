@@ -14,9 +14,11 @@
 | G5 | **Domain + HTTPS hoạt động** (`api.animewiki.eu.cc`) | ✅ **PASS (09:49)** — `curl https://api.animewiki.eu.cc/api/health` → **200** `{"success":true,"message":"ok","db":true}`; HSTS có trên HTTPS. Cloudflare tunnel `animewiki-api` healthy, ingress `api.animewiki.eu.cc → http://103.69.75.49:25200`. Login HTTPS set `tsuki_at` (HttpOnly/Secure/SameSite=Lax) + `tsuki_rt` (Path=/api/auth); WSS `wss://api.animewiki.eu.cc/api/ws` nhận `comment:new` ~1.4s. Rotate: HTTP+secret → 409 `{rotated:false}`, HTTPS+secret → 200 + password + warning, no secret/`x-vercel-cron-signature` → 401 |
 | G6 | Backup Supabase + SQLite đã tạo, có người giữ | ❌ chưa |
 | G7 | Feature flag rollback đã test ít nhất 1 lần | ❌ chưa |
-| G8 | **Runtime khớp build**: panel chạy Node đúng version với `engines`/esbuild | ✅ **PASS** — dev đã hạ `engines >=20.0.0` + `--target=node20`, bundle mới deploy (dist 09:48:58) |
+| G8 | **Runtime khớp build**: panel chạy Node đúng version với `engines`/esbuild | ✅ **PASS** — dev đã hạ `engines >=20.0.0` + `--target=node20`, bundle mới deploy (dist 09:48:58); live `health/deep` báo `node v20.20.2`, `db:true` |
+| G9 | **Origin không public + `trust proxy` allowlist** | ❌ **FAIL** — `http://103.69.75.49:25200/api/health` → 200 (mở công khai). Bằng chứng bypass **đúng cách** (curl không gửi `Origin`, XFF xoay): `POST origin/api/auth/signup` ×12 → **400×12, KHÔNG 429**; qua domain CF ×12 → **400×10 rồi 429,429**. (Đừng dùng request có `Origin` lạ: CSRF guard trả 403 trước limiter — 403 không chứng minh bypass.) Reviewer đo DoS: 55k request → 1.800 → 34 req/s do prune O(N) `rateLimit.ts:56`. Fix: đóng origin / firewall dải CF; `trust proxy` = dải IP CF; bỏ prune O(N) |
+| G10 | **Google OAuth production** | ❌ **FAIL** — `GET /api/auth/google/start` → **503 `oauth_not_configured`**; cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu cutover cần parity Google. (`/api/health/deep` đã được chặn **401** — P2 cũ đã đóng) |
 
-> **No-Go nếu bất kỳ G1–G8 đỏ.** Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
+> **No-Go nếu bất kỳ G1–G10 đỏ.** Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
 >
 > **Phương án tạm nếu TLS chưa xong (phải chốt bằng văn bản):** chỉ dùng `IP:port` + `COOKIE_SECURE=false` trong **LAN/test nội bộ**, tuyệt đối không mời user thật và không gọi đó là production. Ghi rõ ngày hết hạn của phương án tạm và người chịu trách nhiệm.
 
@@ -24,7 +26,7 @@
 
 - **Frontend**: Vercel (giữ nguyên), gọi `VITE_API_URL` trỏ backend mới; `src/lib/apiV2.ts` dùng `fetch(..., { credentials: 'include' })`.
 - **Backend**: `server-v2` chạy trên Pterodactyl, artifact `server-v2/dist/server.cjs` (esbuild `--target=node20`, external `better-sqlite3`), SQLite **WAL** tại `data/app.db` (+ `-wal`, `-shm`), media tại `MEDIA_DIR` (default `./media`).
-- **TLS/edge:** `cloudflared` chạy trên **host DSH** (systemd `cloudflared-animewiki`), tunnel `animewiki-api` → origin `http://103.69.75.49:25200`; public `https://api.animewiki.eu.cc`, WS `wss://api.animewiki.eu.cc/api/ws`. Env: `COOKIE_SECURE=true` (mặc định, đã bỏ `COOKIE_SECURE=false` khỏi `.env`), `TRUST_PROXY=1`.
+- **TLS/edge:** `cloudflared` chạy trên **host DSH** (systemd `cloudflared-animewiki`), tunnel `animewiki-api` → origin `http://103.69.75.49:25200`; public `https://api.animewiki.eu.cc`, WS `wss://api.animewiki.eu.cc/api/ws`. Env: `COOKIE_SECURE=true` (mặc định, đã bỏ `COOKIE_SECURE=false` khỏi `.env`), `TRUST_PROXY=1`. **⚠ Origin vẫn mở công khai** (xem G9) — phải đóng/firewall trước cutover; nếu origin mở, attacker set `x-forwarded-proto: https` để kích hoạt nhánh rotate trả plaintext qua HTTP.
 - **Realtime**: WS cùng process, path `/ws`, auth bằng cookie khi handshake.
 - **Không dùng** `deploy/bundle/server.cjs` cho v2 — file đó là bundle backend **Supabase cũ**, vẫn tracked để rollback tạm.
 - **Supabase**: giữ **read-only + backup** tối thiểu 30 ngày sau cutover, chưa xoá project.
@@ -36,9 +38,11 @@
 3. Build + lưu artifact: `cd server-v2 && npm run build` → copy `dist/server.cjs` + `node_modules/better-sqlite3` lên panel; **giữ bản `.prev`** để rollback.
 4. Tạo backup SQLite: copy `data/app.db`, `data/app.db-wal`, `data/app.db-shm` (phải **stop process** trước khi copy để WAL không lệch).
 5. Migration dry-run: hiện repo có `server-v2/scripts/import-supabase.ts` (đọc `IMPORT_DIR`, in bảng `rows JSON/insert/skip` + `foreign_key_check`). Chạy trên **DB copy** trước, lưu báo cáo; script Phase 3 có `--dry-run/--apply` **chưa tồn tại** — nếu cần thì dev bổ sung trước cutover.
-6. Cấu hình env panel theo `server-v2/.env.example`: `JWT_SECRET` (≥32), `CRON_SECRET` (≥32), `DB_PATH`, `MEDIA_DIR` (nếu có), `SITE_URL=https://animewiki.eu.cc`, `CORS_ORIGINS=https://animewiki.eu.cc`, `COOKIE_SECURE=true`, `TRUST_PROXY=1` **chỉ khi** panel nằm sau reverse proxy tin cậy.
-7. Set `VITE_API_URL` trên **Vercel Preview** trước (chưa production), deploy preview để test.
-8. Thông báo cửa sổ bảo trì (đề xuất 60 phút, giờ thấp điểm), bật banner “đang bảo trì” nếu cần.
+6. **Đóng origin trước mọi thứ khác (G9):** firewall chỉ cho dải IP Cloudflare hoặc tunnel trỏ `127.0.0.1:PORT`; `trust proxy` = allowlist dải CF (không dùng hop `1`); sửa `rateLimit` bỏ prune O(N) khỏi hot path.
+7. Cấu hình env panel theo `server-v2/.env.example`: `JWT_SECRET` (≥32), `CRON_SECRET` (≥32), `DB_PATH`, `MEDIA_DIR` (nếu có), `SITE_URL=https://animewiki.eu.cc`, `CORS_ORIGINS=https://animewiki.eu.cc`, `COOKIE_SECURE=true`, `TRUST_PROXY=1` **chỉ khi** panel nằm sau reverse proxy tin cậy.
+8. Set `VITE_API_URL` trên **Vercel Preview** trước (chưa production), deploy preview để test.
+9. Cấu hình Google OAuth production (`GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI`) nếu cần parity (G10).
+10. Thông báo cửa sổ bảo trì (đề xuất 60 phút, giờ thấp điểm), bật banner “đang bảo trì” nếu cần.
 
 ## 3. Thứ tự cutover
 
@@ -84,6 +88,7 @@ Chạy hết checklist; ghi log + ảnh chụp màn hình. Chỉ khi tất cả 
 ```bash
 BASE=https://api.animewiki.eu.cc/api
 curl -sS $BASE/health                            # {"success":true,...}
+curl -sS http://103.69.75.49:25200/api/health     # PHẢI fail/timeout (origin đã đóng) — nếu 200 ⇒ G9 chưa đạt
 curl -i -X POST $BASE/auth/login -H 'content-type: application/json' \
   -d '{"email":"<test>","password":"<test>"}' -c /tmp/cj.txt   # 200 + Set-Cookie HttpOnly/Secure/SameSite=Lax
 curl -i $BASE/auth/me -b /tmp/cj.txt              # 200, đúng user
@@ -146,6 +151,9 @@ Checklist thủ công (browser):
 - Migration password legacy: chỉ user có hash bcrypt Supabase mới cần `bcryptjs`; user còn lại dùng scrypt; **chưa test với dữ liệu thật**.
 - Chưa có e2e/Playwright; verify bước 4 là thủ công + curl.
 - **Tunnel nằm ngoài container**: `cloudflared` chạy trên host DSH (`systemd cloudflared-animewiki`), không nằm trong container Ptero ⇒ backend phụ thuộc host DSH sống. Muốn tự chủ phải đưa cloudflared vào container (task riêng, chưa làm).
-- **Origin `103.69.75.49:25200` vẫn truy cập trực tiếp được** (đã verify HTTP 200). Với `TRUST_PROXY=1`, caller gọi thẳng IP có thể spoof `X-Forwarded-For` ⇒ ảnh hưởng **rate-limit** (không ảnh hưởng auth vì JWT/cookie vẫn verify). Khuyến nghị: firewall chỉ cho dải IP Cloudflare hoặc bind localhost; ghi nhận là nợ hạ tầng.
+- **Origin `103.69.75.49:25200` vẫn truy cập trực tiếp được** (đã verify HTTP 200). Với `TRUST_PROXY=1`, caller gọi thẳng IP có thể spoof `X-Forwarded-For` ⇒ **bypass rate-limit** (không ảnh hưởng auth vì JWT/cookie vẫn verify). Em tự đo lại 10:01 (đúng cách): `POST origin/api/auth/signup` + XFF xoay, **không gửi Origin** → **400×12, không 429**; qua domain CF → **400×10 rồi 429×2**. *Lưu ý phương pháp:* request có `Origin` lạ bị CSRF guard trả **403 trước limiter** — 403 **không phải** bằng chứng bypass; attacker chỉ cần bỏ header `Origin`.
+- **DoS qua spoof XFF:** reviewer đo 55.000 request XFF ngẫu nhiên làm 1.800 → **34 req/s** (prune O(N) `rateLimit.ts:56`) ⇒ tấn công ~28 giây, không cần credentials. **Hệ quả nguy hiểm:** attacker tự set `x-forwarded-proto: https` ⇒ nhánh rotate “HTTPS → plaintext” bị kích hoạt qua HTTP. Fix: đóng origin / firewall CF, trust proxy allowlist, bỏ prune O(N).
+- **`/api/health/deep`** — đã được chặn, hiện trả **401** cả origin lẫn domain (verify 10:01); P2 này đóng.
+- **Google OAuth đang 503 `oauth_not_configured`** trên production — set env nếu cutover cần parity.
 - HSTS hiện gửi cả trên HTTP (`security.ts:18-20`) nên vô hiệu; sau khi có TLS phải kiểm `Strict-Transport-Security` chỉ xuất hiện trên HTTPS và không gây khoá domain nếu chứng chỉ sai.
 - `server-v2/package.json` đã hạ `engines >=20` + `--target=node20`, bundle mới deploy 09:48:58 ⇒ khớp panel nodejs_20 (G8 ✅).

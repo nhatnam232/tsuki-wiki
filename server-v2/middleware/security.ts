@@ -67,15 +67,61 @@ export function corsWhitelist(req: Request, res: Response, next: NextFunction): 
  * không gửi cookie → lớp thứ hai.
  */
 /**
- * Chỉ cho traffic đi qua Cloudflare. Bật bằng REQUIRE_CF_HEADER=1.
- * Lý do: origin IP:port vẫn truy cập trực tiếp được; khi TRUST_PROXY=1 client
- * gửi X-Forwarded-For giả sẽ spoof được IP và né rate limit.
+ * Chỉ nhận request từ proxy đáng tin — dựa trên IP SOCKET, không phải header
+ * (header `cf-connecting-ip` client tự gửi được → không dùng để quyết định).
+ *
+ * `TRUSTED_PROXIES` = "116.66.214.191,10.0.0.0/8" (IP hoặc CIDR, phẩy phân tách).
+ * `ALLOW_DIRECT=1` để bỏ qua (dev local).
  */
-export function requireCloudflare(req: Request, res: Response, next: NextFunction): void {
-  if (process.env.REQUIRE_CF_HEADER !== '1') return next();
-  const cfIp = req.headers['cf-connecting-ip'];
-  if (typeof cfIp === 'string' && cfIp.length > 0) return next();
-  res.status(403).json({ success: false, error: 'cloudflare_required' });
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+  let value = 0;
+  for (const part of parts) {
+    const n = Number(part);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+    value = value * 256 + n;
+  }
+  return value;
+}
+
+export function ipMatches(remote: string, rule: string): boolean {
+  const ip = remote.replace(/^::ffff:/, '');
+  const trimmed = rule.trim();
+  if (!trimmed) return false;
+
+  const [base, bitsRaw] = trimmed.split('/');
+  if (bitsRaw === undefined) return ip === (base ?? '');
+  const bits = Number(bitsRaw);
+  const ipInt = ipv4ToInt(ip);
+  const baseInt = ipv4ToInt(base ?? '');
+  if (ipInt === null || baseInt === null || !Number.isInteger(bits) || bits < 0 || bits > 32) return false;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ipInt & mask) === (baseInt & mask);
+}
+
+export function trustedProxies(): string[] {
+  return (process.env.TRUSTED_PROXIES ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+export function isTrustedProxy(remoteAddress: string | undefined): boolean {
+  const rules = trustedProxies();
+  if (rules.length === 0 || process.env.ALLOW_DIRECT === '1') return true;
+  if (!remoteAddress) return false;
+  return rules.some((rule) => ipMatches(remoteAddress, rule));
+}
+
+export function requireTrustedProxy(req: Request, res: Response, next: NextFunction): void {
+  if (isTrustedProxy(req.socket.remoteAddress)) return next();
+  res.status(403).json({ success: false, error: 'untrusted_proxy' });
+}
+
+/** @deprecated giữ để không vỡ config cũ; không còn là lớp bảo vệ thật. */
+export function requireCloudflare(_req: Request, _res: Response, next: NextFunction): void {
+  next();
 }
 
 export function requireSameOrigin(req: Request, res: Response, next: NextFunction): void {

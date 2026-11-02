@@ -52,8 +52,10 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
     const now = Date.now();
     const key = `${options.name}:${keyGenerator(req)}`;
 
-    // Guard cứng: nếu vượt trần key thì dọn ngay (hiếm khi xảy ra vì có timer).
-    if (buckets.size > MAX_KEYS) pruneAll(now, options.windowMs);
+    // Guard cứng trên hot path: KHÔNG prune O(N) (60k key → mỗi request quét hết).
+    // Vượt trần thì clear rẻ (mất counter cũ — chấp nhận được, tránh DoS CPU);
+    // sweeper 60s vẫn dọn các key hết hạn.
+    if (buckets.size > MAX_KEYS) buckets.clear();
 
     let bucket = buckets.get(key);
     if (!bucket) {
