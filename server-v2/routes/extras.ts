@@ -80,6 +80,20 @@ export function createExtrasRouter(db: Db): Router {
       throw err;
     }
   }));
+  /** PATCH /api/reviews/:id - edit your own review text. */
+  r.patch('/reviews/:id', authMw, h((req, res) => {
+    const body = str((req.body as Row)?.body ?? (req.body as Row)?.content);
+    if (!body || body.length > 200) return fail(res, 400, 'invalid_body');
+    const row = db.prepare('select user_id from anime_reviews where id = ?').get(req.params.id) as
+      | { user_id: string }
+      | undefined;
+    if (!row) return fail(res, 404, 'not_found');
+    if (row.user_id !== req.auth?.userId) return fail(res, 403, 'forbidden');
+    db.prepare('update anime_reviews set body = ?, updated_at = ? where id = ?')
+      .run(body, nowIso(), req.params.id);
+    ok(res, { updated: 1 });
+  }));
+
   r.delete('/reviews/:id', authMw, h((req, res) => {
     const row = db.prepare('select user_id from anime_reviews where id = ?').get(req.params.id) as { user_id: string } | undefined;
     if (!row) return fail(res, 404, 'not_found');
@@ -232,6 +246,35 @@ export function createExtrasRouter(db: Db): Router {
                 from anime_seasons where anime_id in (${placeholders})`)
       .all(...ids) as Row[];
     ok(res, { items: normalizeRows(rows, { genres: [] }) });
+  }));
+
+  /** GET /api/anime/:id/recommendations - cached "similar anime" pairs (public). */
+  r.get('/anime/:animeId/recommendations', h((req, res) => {
+    const rows = db.prepare(`select target_anime_id, target_title, target_cover, target_score, weight
+      from anime_recommendations where source_anime_id = ? order by weight desc, target_score desc limit 20`)
+      .all(req.params.animeId) as Row[];
+    ok(res, { items: rows });
+  }));
+
+  /** GET /api/anime-schedule?day=Monday - cached broadcast schedule (public). */
+  r.get('/anime-schedule', h((req, res) => {
+    const day = str(req.query.day);
+    const rows = day
+      ? (db.prepare('select * from anime_schedule where lower(broadcast_day) = lower(?) order by broadcast_time')
+          .all(day) as Row[])
+      : (db.prepare('select * from anime_schedule order by broadcast_day, broadcast_time').all() as Row[]);
+    ok(res, { items: rows });
+  }));
+
+  /** DELETE /api/activity/:id - remove one of your own activity rows. */
+  r.delete('/activity/:id', authMw, h((req, res) => {
+    const row = db.prepare('select user_id from activity_feed where id = ?').get(req.params.id) as
+      | { user_id: string }
+      | undefined;
+    if (!row) return fail(res, 404, 'not_found');
+    if (row.user_id !== req.auth?.userId) return fail(res, 403, 'forbidden');
+    db.prepare('delete from activity_feed where id = ?').run(req.params.id);
+    ok(res, { deleted: 1 });
   }));
 
   // ── service-facing: translation_cache + mal_sync_jobs (không route) ──
