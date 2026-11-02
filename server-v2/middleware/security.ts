@@ -155,3 +155,59 @@ function safeOrigin(value: string): string | undefined {
     return undefined;
   }
 }
+
+/**
+ * Client IP + HTTPS detection that does NOT trust `X-Forwarded-For`.
+ *
+ * Express's `trust proxy` walks the XFF chain, but Cloudflare Tunnel forwards a
+ * client-supplied XFF unchanged, so a spoofed value becomes `req.ip` and every
+ * rate-limit bucket can be dodged with one header. Instead:
+ *
+ *   peer in TRUSTED_PROXIES -> use `cf-connecting-ip` (Cloudflare overwrites it
+ *                              at the edge; a direct client cannot influence it)
+ *   peer not trusted        -> use the kernel socket address, ignore all headers
+ *
+ * `trust proxy` is therefore disabled in app.ts.
+ */
+declare module 'express-serve-static-core' {
+  interface Request {
+    clientIp?: string
+    isHttps?: boolean
+  }
+}
+
+export function resolveClientIp(req: Request, _res: Response, next: NextFunction): void {
+  const peer = req.socket.remoteAddress ?? ''
+  // Fail-closed: an empty allowlist means "no proxy is trusted", so headers are
+  // never used to derive the client IP (dev override: ALLOW_DIRECT=1).
+  const trusted =
+    process.env.ALLOW_DIRECT === '1' || (trustedProxies().length > 0 && isTrustedProxy(peer))
+  const cfIp = req.headers['cf-connecting-ip']
+
+  if (trusted && typeof cfIp === 'string' && cfIp.trim()) {
+    req.clientIp = cfIp.trim()
+  } else {
+    req.clientIp = peer.replace(/^::ffff:/, '') || 'unknown'
+  }
+
+  const proto = req.headers['x-forwarded-proto']
+  const cfVisitor = req.headers['cf-visitor']
+  const forwardedHttps =
+    (typeof proto === 'string' && proto.split(',')[0]?.trim() === 'https') ||
+    (typeof cfVisitor === 'string' && cfVisitor.includes('https'))
+  // Only honour forwarding headers when the peer is a trusted proxy AND the
+  // socket itself is not already TLS.
+  req.isHttps = req.secure || (trusted && forwardedHttps)
+
+  next()
+}
+
+/** Client IP resolved by `resolveClientIp` (falls back to Express's value). */
+export function clientIpOf(req: Request): string {
+  return req.clientIp ?? req.ip ?? 'unknown'
+}
+
+/** True when the request reached us over TLS (directly or via a trusted proxy). */
+export function isHttpsRequest(req: Request): boolean {
+  return req.isHttps === true
+}

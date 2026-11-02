@@ -9,6 +9,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 
 process.env.JWT_SECRET = 'secfix-secret-0123456789abcdef0123456789';
+process.env.TRUSTED_PROXIES = '127.0.0.1';
 process.env.CRON_SECRET = 'cron-secret-0123456789abcdef0123456789';
 process.env.COOKIE_SECURE = 'false';
 

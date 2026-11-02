@@ -9,6 +9,7 @@
  * X-Forwarded-For sẽ spoof được IP và né rate limit.
  */
 import type { Request, Response, RequestHandler } from 'express';
+import { clientIpOf } from './security';
 
 export interface RateLimitOptions {
   /** Tên bucket, dùng để tách bộ đếm giữa các route. */
@@ -44,7 +45,8 @@ export function resetRateLimits(): void {
 }
 
 export function rateLimit(options: RateLimitOptions): RequestHandler {
-  const keyGenerator = options.keyGenerator ?? ((req: Request) => req.ip ?? 'unknown');
+  const keyGenerator =
+    options.keyGenerator ?? ((req: Request) => clientIpOf(req));
 
   return (req: Request, res: Response, next: () => void) => {
     if (options.enabled === false) return next();

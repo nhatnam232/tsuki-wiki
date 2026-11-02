@@ -18,7 +18,7 @@ import { createAdminRouter } from './admin/routes';
 import { createCoreRouter } from './routes/core';
 import { createExtrasRouter } from './routes/extras';
 import { createMediaRouter } from './media/routes';
-import { corsWhitelist, requireSameOrigin, requireTrustedProxy, securityHeaders, trustedProxies } from './middleware/security';
+import { corsWhitelist, requireSameOrigin, requireTrustedProxy, resolveClientIp, securityHeaders, trustedProxies } from './middleware/security';
 
 export interface AppDeps {
   /** Cho phép test inject DB riêng (mặc định lấy singleton). */
@@ -37,10 +37,15 @@ export function createApp(deps: AppDeps = {}): express.Express {
   app.disable('x-powered-by');
   // trust proxy: ưu tiên TRUSTED_PROXIES (IP/CIDR), giữ TRUST_PROXY=1 cho config cũ.
   const proxies = trustedProxies();
-  if (proxies.length > 0) app.set('trust proxy', proxies);
-  else if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+  // NEVER let Express parse X-Forwarded-For: Cloudflare Tunnel forwards a
+  // client-supplied XFF unchanged, so trusting it lets anyone rotate rate-limit
+  // buckets with one header. resolveClientIp() derives the client IP from the
+  // socket peer + cf-connecting-ip instead.
+  app.set('trust proxy', false);
+  void proxies;
 
   app.use(securityHeaders);
+  app.use(resolveClientIp);
   app.use(requireTrustedProxy);
   app.use(corsWhitelist);
   app.use(express.json({ limit: '100kb' }));

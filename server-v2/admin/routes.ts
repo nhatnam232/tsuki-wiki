@@ -17,6 +17,7 @@ import { nowIso, todayIso } from '../lib/time';
 import { requireAuth, requireRole } from '../middleware/requireAuth';
 import { requireCronSecret } from '../middleware/requireCronSecret';
 import { envInt, rateLimit } from '../middleware/rateLimit';
+import { isHttpsRequest } from '../middleware/security';
 import { notifyDiscord } from '../services/webhook';
 import { getCronSecret } from '../services/cronSecret';
 
@@ -62,7 +63,7 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
       // [P1] Gate TLS phải chạy TRƯỚC transaction: nếu trả 409 sau khi ghi thì
       // mật khẩu mới bị vứt và mất vĩnh viễn (cron HTTP không webhook).
       const webhookConfigured = Boolean(process.env.ADMIN_PASSWORD_WEBHOOK);
-      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      const isHttps = isHttpsRequest(req);
       if (!webhookConfigured && !isHttps) {
         res.status(409).json({ success: false, rotated: false, error: 'tls_required_for_plaintext' });
         return;
