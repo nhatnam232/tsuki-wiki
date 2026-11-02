@@ -12,7 +12,7 @@ import Layout from '@/components/Layout'
 import SEO from '@/components/SEO'
 import UserAvatar from '@/components/UserAvatar'
 import ReloadLink from '@/components/ReloadLink'
-import { supabase } from '@/lib/supabase'
+import { API_READY, activity as activityApi, connectRealtime } from '@/lib/backend'
 import { useLangContext } from '@/providers/LangProvider'
 import type { BadgeId } from '@/lib/badges'
 
@@ -51,8 +51,8 @@ export default function ActivityFeed() {
   const [refreshing, setRefreshing] = useState(false)
 
   const load = async (reset = false) => {
-    if (!supabase) {
-      setError(lang === 'vi' ? 'Supabase chưa cấu hình.' : 'Supabase not configured.')
+    if (!API_READY) {
+      setError(lang === 'vi' ? 'API chưa cấu hình.' : 'API not configured.')
       setLoading(false)
       return
     }
@@ -60,20 +60,12 @@ export default function ActivityFeed() {
     else setLoading(true)
     try {
       const cursor = reset ? null : items[items.length - 1]?.created_at
-      let q = supabase
-        .from('activity_feed_enriched')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(PAGE_SIZE)
-      if (cursor && !reset) q = q.lt('created_at', cursor)
-      const { data, error } = await q
-      if (error) {
-        setError(error.message)
-      } else {
-        const rows = (data ?? []) as ActivityRow[]
-        setItems((prev) => (reset ? rows : [...prev, ...rows]))
-        setHasMore(rows.length === PAGE_SIZE)
-      }
+      const res = await activityApi.feed('public', { limit: PAGE_SIZE, before: cursor })
+      const rows = (res.items ?? []) as ActivityRow[]
+      setItems((prev) => (reset ? rows : [...prev, ...rows]))
+      setHasMore(rows.length === PAGE_SIZE)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'load_failed')
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -83,19 +75,14 @@ export default function ActivityFeed() {
   useEffect(() => {
     void load(true)
 
-    if (!supabase) return undefined
+    if (!API_READY) return undefined
 
     // Realtime: prepend new public activities as they arrive.
-    const channel = supabase
-      .channel('activity_feed_live')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'activity_feed', filter: 'is_public=eq.true' },
-        () => { void load(true) },
-      )
-      .subscribe()
+    const dispose = connectRealtime(['activity'], (event) => {
+      if (event.type === 'activity:new') void load(true)
+    })
 
-    return () => { supabase!.removeChannel(channel) }
+    return () => { dispose() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

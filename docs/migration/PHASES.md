@@ -227,7 +227,7 @@ node --test test/ws-client.test.ts    # dùng package `ws` (Phase 2 được duy
 1. `scripts/migrate-supabase.mjs`: đọc Supabase **read-only** (service role, `--dry-run` mặc định), xuất JSON snapshot; import vào SQLite theo thứ tự FK; `--apply` mới ghi; idempotent (`UPSERT` theo PK).
 2. Mapping kiểu: uuid→TEXT, timestamptz→ISO UTC, jsonb/text[]→JSON text, boolean→0/1; `auth.users` → `users` (giữ `id`, email; password Supabase không migrate được → user phải reset mật khẩu hoặc dùng Google).
 3. Kiểm chứng: script so sánh `count(*)` từng bảng (Supabase vs SQLite), checksum 3 cột định danh, báo cáo lệch.
-4. Cutover frontend: 18 file đang dùng `@supabase/supabase-js` → `src/lib/apiV2.ts` (fetch + credentials include) + `useAuthV2` + `useRealtime` (WS); route guard; xoá `@supabase/supabase-js` khỏi `package.json` khi xong.
+4. Cutover frontend: **8 file còn import shim** `@/lib/supabase` (shim ném lỗi khi dùng) phải chuyển sang `@/lib/backend` + `useRealtime` (WS): `CommentSection`, `Profile`, `CollectionsPage`, `AdminDashboard`, `ActivityFeed`, `PersonalLibrary`, `RecommendedForYou`, `SuggestEditModal`. Ưu tiên đúng thứ tự trên. Sau đó xoá `src/lib/supabase.ts`, bỏ `@supabase/supabase-js` khỏi `package.json` và bỏ entry `'supabase'` trong `manualChunks` (`vite.config.ts:25`).
 5. **Gỡ Supabase phía server** (2 file còn lại): `server/lib/translate.ts`, `server/routes/admin.ts` (đã port ở Phase 1), `server/lib/`/`server/routes/` còn lại, `api/index.ts`, `scripts/prerender.ts`, `vercel.json` — quyết định xoá `server/`+`api/` hay trỏ Vercel sang `server-v2`. Kiểm: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng.
 6. Feature flag `VITE_BACKEND=supabase|v2` để rollback tức thời; runbook cutover + rollback trong `docs/migration/CUTOVER.md`.
 7. Backup: copy `data/app.db` + WAL trước mỗi lần import; giữ bản Supabase read-only ít nhất 30 ngày.
@@ -236,7 +236,8 @@ node --test test/ws-client.test.ts    # dùng package `ws` (Phase 2 được duy
 - [ ] `node scripts/migrate-supabase.mjs --dry-run` in bảng so sánh, **không ghi** DB.
 - [ ] Sau `--apply`: `count(*)` 24/24 bảng khớp Supabase (ghi rõ số từng bảng vào log).
 - [ ] 10 spot-check ngẫu nhiên (id, created_at, quan hệ FK) khớp.
-- [ ] Frontend: `grep -rn "@supabase" src/` → rỗng; login/signup/Google/library/comment/collection chạy được trên backend mới.
+- [ ] Frontend: `grep -rln "lib/supabase" src/ | grep -v "src/lib/supabase.ts" | wc -l` → **0** (hiện 8); xoá `src/lib/supabase.ts`; bỏ dep `@supabase/supabase-js`; bỏ `manualChunks` entry `'supabase'`; `wc -c dist/assets/supabase-*.js` ≈ **0 byte** (chunk rỗng vẫn tồn tại — không dùng “0 file”); `grep -l "GoTrueClient\|PostgrestClient\|supabase.co" dist/assets/*.js` → rỗng.
+- [ ] Runtime: mở **Profile**, **CommentSection**, **CollectionsPage**, **AdminDashboard**, **ActivityFeed** — không còn throw `[supabase] đã bị loại bỏ`.
 - [ ] Server: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng (2 file hiện có: `server/routes/admin.ts`, `server/lib/translate.ts`).
 - [ ] Rollback: bật `VITE_BACKEND=supabase` → app cũ chạy lại; đã thử 1 lần và ghi log.
 - [ ] `npm run check`, `npm run lint`, `npm run build` ở root → exit 0.
@@ -247,7 +248,8 @@ cd /tmp/opencode/work/tsuki-wiki
 node server-v2/scripts/migrate-supabase.mjs --dry-run
 node server-v2/scripts/migrate-supabase.mjs --apply --backup data/backup-$(date +%s).db
 sqlite3 server-v2/data/app.db "select 'profiles',count(*) from profiles union all select 'comments',count(*) from comments;"
-grep -rn "@supabase" src/ || echo "NO_SUPABASE_IMPORTS"
+grep -rln "lib/supabase" src/ | grep -v "src/lib/supabase.ts" | wc -l    # phải 0
+grep -l "GoTrueClient\|PostgrestClient\|supabase.co" dist/assets/*.js || echo "NO_SUPABASE_SDK_IN_DIST"
 grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts || echo "NO_SUPABASE_SERVER"
 npm run check && npm run lint && npm run build
 ```

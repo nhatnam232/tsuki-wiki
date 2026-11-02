@@ -183,14 +183,45 @@ export function createExtrasRouter(db: Db): Router {
   // ── activity_feed (public is_public=1 | self | mod) ────────
   r.get('/activity', optionalMw, h((req, res) => {
     const scope = String(req.query.scope ?? 'public');
+    const limit = Math.min(50, Math.max(1, int(req.query.limit) ?? 30));
+    const before = str(req.query.before);
+
     if (scope === 'public') {
-      const rows = db.prepare('select * from activity_feed_enriched order by created_at desc limit 50').all() as Row[];
-      return ok(res, { items: normalizeRows(rows, ACTIVITY_JSON) });
+      const rows = before
+        ? (db.prepare('select * from activity_feed_enriched where created_at < ? order by created_at desc limit ?')
+            .all(before, limit) as Row[])
+        : (db.prepare('select * from activity_feed_enriched order by created_at desc limit ?')
+            .all(limit) as Row[]);
+      return ok(res, { items: normalizeRows(rows, ACTIVITY_JSON), limit });
     }
     if (!req.auth) return fail(res, 401, 'unauthorized');
-    const rows = db.prepare('select * from activity_feed where user_id = ? order by created_at desc limit 50')
-      .all(req.auth.userId) as Row[];
-    ok(res, { items: normalizeRows(rows, ACTIVITY_JSON) });
+    const rows = before
+      ? (db.prepare('select * from activity_feed where user_id = ? and created_at < ? order by created_at desc limit ?')
+          .all(req.auth.userId, before, limit) as Row[])
+      : (db.prepare('select * from activity_feed where user_id = ? order by created_at desc limit ?')
+          .all(req.auth.userId, limit) as Row[]);
+    ok(res, { items: normalizeRows(rows, ACTIVITY_JSON), limit });
+  }));
+
+  /**
+   * GET /api/anime-seasons?ids=1,2,3 (public)
+   * Cached season metadata used to build genre-based recommendations without
+   * hitting AniList per id.
+   */
+  r.get('/anime-seasons', h((req, res) => {
+    const raw = str(req.query.ids) ?? '';
+    const ids = raw
+      .split(',')
+      .map((v) => int(v))
+      .filter((v): v is number => v !== null)
+      .slice(0, 50);
+    if (ids.length === 0) return fail(res, 400, 'invalid_ids');
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db
+      .prepare(`select anime_id, title, cover_image, genres, score, season, year, episodes, status
+                from anime_seasons where anime_id in (${placeholders})`)
+      .all(...ids) as Row[];
+    ok(res, { items: normalizeRows(rows, { genres: [] }) });
   }));
 
   // ── service-facing: translation_cache + mal_sync_jobs (không route) ──

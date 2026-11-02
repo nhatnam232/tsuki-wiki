@@ -338,8 +338,13 @@ export const notifications = {
 }
 
 export const editSuggestions = {
-  create: (input: { anime_id: number; field: string; value: string; reason?: string }) =>
-    post<{ success: boolean; suggestion: unknown }>('/edit-suggestions', input),
+  create: (input: {
+    anime_id: number
+    field: string
+    content_after: string
+    content_before?: string | null
+    reason?: string | null
+  }) => post<{ success: boolean; suggestion: unknown }>('/edit-suggestions', input),
   mine: () => get<{ success: boolean; items: unknown[] }>('/edit-suggestions'),
   pending: () => get<{ success: boolean; items: unknown[] }>('/edit-suggestions', { scope: 'mod' }),
   review: (id: string, decision: 'approve' | 'reject') =>
@@ -359,8 +364,20 @@ export const quests = {
 }
 
 export const activity = {
-  feed: (scope: 'public' | 'mine' = 'public') =>
-    get<{ success: boolean; items: unknown[] }>('/activity', { scope }),
+  feed: (scope: 'public' | 'mine' = 'public', opts: { limit?: number; before?: string | null } = {}) =>
+    get<{ success: boolean; items: unknown[]; limit: number }>('/activity', {
+      scope,
+      limit: opts.limit,
+      before: opts.before ?? undefined,
+    }),
+}
+
+/** Cached season metadata (genres/cover/score) used for recommendations. */
+export const animeSeasons = {
+  byIds: (ids: number[]) =>
+    get<{ success: boolean; items: Array<Record<string, unknown>> }>('/anime-seasons', {
+      ids: ids.slice(0, 50).join(','),
+    }),
 }
 
 /* ── realtime (WebSocket) ─────────────────────────────────────────── */

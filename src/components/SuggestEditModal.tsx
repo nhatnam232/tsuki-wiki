@@ -4,7 +4,7 @@ import { Loader2, PencilLine, X } from 'lucide-react'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { useToast } from '@/providers/ToastProvider'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, editSuggestions } from '@/lib/backend'
 
 type Props = {
   open: boolean
@@ -45,20 +45,18 @@ export default function SuggestEditModal({ open, onClose, anime }: Props) {
   const submit = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error('not signed in')
-      if (!isSupabaseConfigured) throw new Error('Supabase not configured')
+      if (!API_READY) throw new Error('API not configured')
       const before =
         field === 'trailer_url' ? anime.trailer_url ?? '' :
         field === 'synopsis'    ? anime.synopsis ?? '' :
         ''
-      const { error } = await supabase.from('anime_edit_suggestions').insert({
-        user_id: user.id,
+      await editSuggestions.create({
         anime_id: anime.id,
         field,
         content_before: before || null,
         content_after: value.trim(),
         reason: reason.trim() || null,
       })
-      if (error) throw error
     },
     onSuccess: () => {
       const trusted = (profile?.badges ?? []).some((b) =>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Sparkles } from 'lucide-react'
 import AnimeCard from './AnimeCard'
 import { fetchAnimeList } from '@/lib/api'
-import { supabase } from '@/lib/supabase'
+import { API_READY, animeSeasons, favorites as favoritesApi, library as libraryApi } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 
@@ -42,7 +42,7 @@ export default function RecommendedForYou({ onAuthRequired }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!user || !supabase) {
+    if (!user || !API_READY) {
       setRecs([])
       return
     }
@@ -53,21 +53,11 @@ export default function RecommendedForYou({ onAuthRequired }: Props) {
       setError(null)
       try {
         // 1. Pull library + favorites with anime IDs
-        const { data: libraryRows } = await supabase
-          .from('user_library')
-          .select('anime_id')
-          .eq('user_id', user.id)
-          .limit(50)
-
-        const { data: favRows } = await supabase
-          .from('favorites')
-          .select('anime_id')
-          .eq('user_id', user.id)
-          .limit(50)
+        const [libraryRes, favRes] = await Promise.all([libraryApi.list(), favoritesApi.list()])
 
         const seenIds = new Set<number>()
-        for (const r of libraryRows ?? []) seenIds.add(r.anime_id)
-        for (const r of favRows ?? []) seenIds.add(r.anime_id)
+        for (const r of libraryRes.items ?? []) seenIds.add(r.anime_id)
+        for (const r of favRes.items ?? []) seenIds.add(r.anime_id)
 
         if (seenIds.size === 0) {
           if (!cancelled) {
@@ -80,13 +70,10 @@ export default function RecommendedForYou({ onAuthRequired }: Props) {
         // 2. Build genre histogram from anime_seasons cache (avoids hitting
         //    AniList per-id which is rate-limited).
         const ids = Array.from(seenIds)
-        const { data: seenAnime } = await supabase
-          .from('anime_seasons')
-          .select('genres')
-          .in('anime_id', ids.slice(0, 30))
+        const seasonsRes = await animeSeasons.byIds(ids.slice(0, 30)).catch(() => ({ items: [] }))
 
         const genreCounts = new Map<string, number>()
-        for (const row of seenAnime ?? []) {
+        for (const row of (seasonsRes.items ?? []) as Array<{ genres?: string[] }>) {
           for (const g of row.genres ?? []) {
             genreCounts.set(g, (genreCounts.get(g) ?? 0) + 1)
           }
