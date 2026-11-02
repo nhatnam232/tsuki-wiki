@@ -17,7 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, comments as commentsApi, connectRealtime, mediaUrl, uploadMedia } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { useToast } from '@/providers/ToastProvider'
@@ -118,116 +118,63 @@ export default function CommentSection({ entityType, entityId }: Props) {
   }
 
   const load = useCallback(async () => {
-    if (!isSupabaseConfigured) {
+    if (!API_READY) {
       setLoading(false)
       return
     }
     setLoading(true)
-
-    const { data, error } = await supabase
-      .from('comments')
-      .select('id, user_id, entity_type, entity_id, parent_id, body, image_url, is_deleted, created_at')
-      .eq('entity_type', entityType)
-      .eq('entity_id', entityId)
-      .order('created_at', { ascending: true })
-      .limit(500)
-
-    if (error || !data) {
-      if (error) console.warn('[comments] load failed', error.message)
+    try {
+      const res = await commentsApi.list(entityType, entityId, { limit: 500 })
+      const items = (res.items ?? []) as Array<Record<string, unknown>>
+      const mapped: CommentRow[] = items.map((raw) => {
+        const author: AuthorProfile | null = raw.username || raw.display_name || raw.avatar_url
+          ? {
+              display_name: (raw.display_name as string | null) ?? null,
+              avatar_url: (raw.avatar_url as string | null) ?? null,
+              username: (raw.username as string | null) ?? null,
+              created_at: null,
+              badges: [],
+              comments_count: 0,
+              library_count: 0,
+              reviews_count: 0,
+            }
+          : null
+        return {
+          id: String(raw.id),
+          user_id: String(raw.user_id),
+          entity_type: String(raw.entity_type) as EntityType,
+          entity_id: Number(raw.entity_id),
+          parent_id: (raw.parent_id as string | null) ?? null,
+          body: String(raw.body ?? ''),
+          image_url: mediaUrl((raw.image_url as string | null) ?? null),
+          is_deleted: Boolean(raw.is_deleted),
+          created_at: String(raw.created_at),
+          author,
+          upvotes: Number(raw.upvotes ?? 0),
+          downvotes: Number(raw.downvotes ?? 0),
+          myVote: ((raw.my_vote ?? 0) as -1 | 0 | 1),
+        }
+      })
+      setRows(mapped)
+    } catch (err) {
+      console.warn('[comments] load failed', err)
       setRows([])
+    } finally {
       setLoading(false)
-      return
     }
-
-    const records = data as CommentRecord[]
-    const userIds = Array.from(new Set(records.map((r) => r.user_id).filter(Boolean)))
-    const commentIds = records.map((r) => r.id)
-
-    let authorMap = new Map<string, AuthorProfile>()
-    if (userIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select(
-          'id, display_name, avatar_url, username, created_at, badges, comments_count, library_count, reviews_count',
-        )
-        .in('id', userIds)
-      if (profiles) {
-        authorMap = new Map(
-          profiles.map((p: any) => [
-            p.id as string,
-            {
-              display_name: p.display_name as string | null,
-              avatar_url: p.avatar_url as string | null,
-              username: p.username as string | null,
-              created_at: p.created_at as string | null,
-              badges: (p.badges as string[]) ?? [],
-              comments_count: p.comments_count ?? 0,
-              library_count: p.library_count ?? 0,
-              reviews_count: p.reviews_count ?? 0,
-            },
-          ]),
-        )
-      }
-    }
-
-    // Vote aggregates
-    const voteCounts = new Map<string, { up: number; down: number }>()
-    if (commentIds.length > 0) {
-      const { data: counts } = await supabase
-        .from('comment_vote_counts')
-        .select('comment_id, upvotes, downvotes')
-        .in('comment_id', commentIds)
-      ;(counts ?? []).forEach((c: any) =>
-        voteCounts.set(c.comment_id, { up: c.upvotes ?? 0, down: c.downvotes ?? 0 }),
-      )
-    }
-
-    // Current user's votes
-    const myVotes = new Map<string, -1 | 1>()
-    if (user && commentIds.length > 0) {
-      const { data: mv } = await supabase
-        .from('comment_votes')
-        .select('comment_id, value')
-        .eq('user_id', user.id)
-        .in('comment_id', commentIds)
-      ;(mv ?? []).forEach((v: any) => myVotes.set(v.comment_id, v.value))
-    }
-
-    setRows(
-      records.map((r) => ({
-        ...r,
-        author: authorMap.get(r.user_id) ?? null,
-        upvotes: voteCounts.get(r.id)?.up ?? 0,
-        downvotes: voteCounts.get(r.id)?.down ?? 0,
-        myVote: (myVotes.get(r.id) ?? 0) as -1 | 0 | 1,
-      })),
-    )
-    setLoading(false)
   }, [entityId, entityType, user])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  // Realtime updates for comments AND votes.
+  // Realtime updates for this entity's comment room.
   useEffect(() => {
-    if (!isSupabaseConfigured) return
-    const ch = supabase
-      .channel(`comments-${entityType}-${entityId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comments', filter: `entity_id=eq.${entityId}` },
-        () => void load(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comment_votes' },
-        () => void load(),
-      )
-      .subscribe()
-    return () => {
-      supabase.removeChannel(ch)
-    }
+    if (!API_READY) return
+    const dispose = connectRealtime([`comments:${entityType}:${entityId}`], (event) => {
+      if (event.type.startsWith('comment:')) void load()
+    })
+    return () => dispose()
   }, [entityId, entityType, load])
 
   const tree = useMemo(() => {
@@ -258,37 +205,36 @@ export default function CommentSection({ entityType, entityId }: Props) {
 
     let imageUrl: string | null = null
     if (attachImage && pendingImage) {
-      const ext = pendingImage.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png'
-      const path = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-      const upload = await supabase.storage
-        .from('comment-images')
-        .upload(path, pendingImage, {
-          cacheControl: '3600',
-          contentType: pendingImage.type || `image/${ext}`,
-          upsert: false,
-        })
-      if (upload.error) {
+      try {
+        imageUrl = mediaUrl(await uploadMedia('comment-images', pendingImage))
+      } catch (err) {
         setSubmitting(false)
-        toast.error(lang === 'vi' ? 'Tải ảnh thất bại' : 'Image upload failed', upload.error.message)
+        toast.error(
+          lang === 'vi' ? 'Tải ảnh thất bại' : 'Image upload failed',
+          err instanceof Error ? err.message : 'upload_failed',
+        )
         return
       }
-      imageUrl = supabase.storage.from('comment-images').getPublicUrl(path).data.publicUrl
     }
 
-    const { error } = await supabase.from('comments').insert({
-      user_id: user.id,
-      entity_type: entityType,
-      entity_id: entityId,
-      parent_id: parent,
-      body: trimmed.slice(0, 2000),
-      image_url: imageUrl,
-    })
+    let error: unknown = null
+    try {
+      await commentsApi.create({
+        entity_type: entityType,
+        entity_id: entityId,
+        parent_id: parent,
+        body: trimmed.slice(0, 2000),
+        image_url: imageUrl,
+      })
+    } catch (err) {
+      error = err
+    }
     setSubmitting(false)
 
     if (error) {
       toast.error(
         lang === 'vi' ? 'Đăng bình luận thất bại' : 'Failed to post comment',
-        error.message,
+        error instanceof Error ? error.message : 'create_failed',
       )
       return
     }
@@ -307,9 +253,13 @@ export default function CommentSection({ entityType, entityId }: Props) {
 
   const remove = async (id: string) => {
     if (!user) return
-    const { error } = await supabase.from('comments').delete().eq('id', id).eq('user_id', user.id)
-    if (error) {
-      toast.error(lang === 'vi' ? 'Xóa bình luận thất bại' : 'Failed to delete comment', error.message)
+    try {
+      await commentsApi.remove(id)
+    } catch (err) {
+      toast.error(
+        lang === 'vi' ? 'Xóa bình luận thất bại' : 'Failed to delete comment',
+        err instanceof Error ? err.message : 'delete_failed',
+      )
       return
     }
     toast.info(lang === 'vi' ? 'Đã xóa bình luận' : 'Comment deleted')
@@ -340,17 +290,12 @@ export default function CommentSection({ entityType, entityId }: Props) {
 
     const current = rows.find((r) => r.id === commentId)
     const isToggle = current?.myVote === value
-    if (isToggle) {
-      await supabase
-        .from('comment_votes')
-        .delete()
-        .eq('comment_id', commentId)
-        .eq('user_id', user.id)
-    } else {
-      await supabase.from('comment_votes').upsert(
-        { comment_id: commentId, user_id: user.id, value },
-        { onConflict: 'comment_id,user_id' },
-      )
+    try {
+      if (isToggle) await commentsApi.unvote(commentId)
+      else await commentsApi.vote(commentId, value)
+    } catch (err) {
+      console.warn('[comments] vote failed', err)
+      void load()
     }
   }
 
@@ -399,7 +344,7 @@ export default function CommentSection({ entityType, entityId }: Props) {
 
   const topLevel = tree.get(null) ?? []
 
-  if (!isSupabaseConfigured) {
+  if (!API_READY) {
     return (
       <section className="mb-10">
         <h2 className="mb-4 flex items-center gap-2 text-2xl font-bold text-white">

@@ -22,7 +22,6 @@ export default defineConfig({
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
           'lucide': ['lucide-react'],
-          'supabase': ['@supabase/supabase-js'],
           'lottie': ['@lottiefiles/react-lottie-player'],
           'query':   ['@tanstack/react-query'],
           'helmet':  ['react-helmet-async'],

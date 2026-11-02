@@ -29,7 +29,7 @@ import { useLangContext } from '@/providers/LangProvider'
 import { useToast } from '@/providers/ToastProvider'
 import { useNowPlaying } from '@/providers/NowPlayingProvider'
 import { useFavoritesStore } from '@/store/useFavoritesStore'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, favorites as favoritesApi, library as libraryApi } from '@/lib/backend'
 import {
   BadgeRow,
   computeAutoBadges,
@@ -102,25 +102,35 @@ export default function Profile() {
 
   // ── Load history ──
   const loadHistory = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) return
+    if (!user || !API_READY) return
     setHistoryLoading(true)
-    const [{ data: favData }, { data: libData }] = await Promise.all([
-      supabase
-        .from('favorites')
-        .select('anime_id, anime_title, anime_cover, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(60),
-      supabase
-        .from('user_library')
-        .select('anime_id, anime_title, anime_cover, status, current_episode, anime_episodes, score, updated_at')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false })
-        .limit(120),
-    ])
-    setServerFavorites((favData as ServerFavorite[]) ?? [])
-    setLibraryHistory((libData as LibraryHistoryEntry[]) ?? [])
-    setHistoryLoading(false)
+    try {
+      const [favRes, libRes] = await Promise.all([favoritesApi.list(), libraryApi.list()])
+      setServerFavorites(
+        (favRes.items ?? []).map((f) => ({
+          anime_id: f.anime_id,
+          anime_title: f.anime_title,
+          anime_cover: f.anime_cover,
+          created_at: '',
+        })) as ServerFavorite[],
+      )
+      setLibraryHistory(
+        (libRes.items ?? []).map((l) => ({
+          anime_id: l.anime_id,
+          anime_title: l.anime_title ?? '',
+          anime_cover: l.anime_cover,
+          status: l.status,
+          current_episode: l.current_episode,
+          anime_episodes: l.anime_episodes,
+          score: l.score,
+          updated_at: l.updated_at,
+        })) as LibraryHistoryEntry[],
+      )
+    } catch (err) {
+      console.warn('[Profile] history load failed', err)
+    } finally {
+      setHistoryLoading(false)
+    }
   }, [user])
 
   useEffect(() => {

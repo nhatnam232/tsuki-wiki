@@ -129,10 +129,10 @@ export default function AddToLibraryButton({
       const friendly =
         lang === 'vi'
           ? error.code === '42P01'
-            ? 'Bảng user_library chưa tồn tại. Hãy chạy supabase/setup_all.sql.'
+            ? 'Bảng user_library chưa tồn tại trên backend.'
             : `Không thể lưu vào thư viện (${error.code ?? 'lỗi'})`
           : error.code === '42P01'
-            ? 'Table user_library does not exist. Run supabase/setup_all.sql.'
+            ? 'Table user_library does not exist on the backend.'
             : `Could not save to library (${error.code ?? 'error'})`
       toast.error(friendly, error.message)
       return

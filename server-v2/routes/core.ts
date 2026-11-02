@@ -227,14 +227,16 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
     const params: unknown[] = [];
     if (entityType) { where.push('c.entity_type = ?'); params.push(entityType); }
     if (entityId !== null) { where.push('c.entity_id = ?'); params.push(entityId); }
-    if (a) { where.push('(c.user_id = ?)'); params.push(a.userId); }
+    // NOTE: do not filter by the caller here - a comment section must show
+    // everyone's comments. `my_vote` is what personalises the payload.
     const rows = db.prepare(`select c.*, p.username, p.display_name, p.avatar_url,
-        coalesce(v.upvotes,0) upvotes, coalesce(v.downvotes,0) downvotes, coalesce(v.score,0) score
+        coalesce(v.upvotes,0) upvotes, coalesce(v.downvotes,0) downvotes, coalesce(v.score,0) score,
+        (select mv.value from comment_votes mv where mv.comment_id = c.id and mv.user_id = ?) my_vote
       from comments c
       left join profiles p on p.id = c.user_id
       left join comment_vote_counts v on v.comment_id = c.id
-      where ${where.length > 1 ? where.slice(1).join(' and ') || '1=1' : 'c.is_deleted = 0'}
-      order by ${sort} limit ? offset ?`).all(...(where.length > 1 ? params : []), limit, offset);
+      where ${where.length > 1 ? where.slice(1).join(' and ') : 'c.is_deleted = 0'}
+      order by ${sort} limit ? offset ?`).all(a?.userId ?? '', ...(where.length > 1 ? params : []), limit, offset);
     ok(res, { items: rows, limit, offset });
   }));
 
@@ -298,6 +300,25 @@ export function createCoreRouter(db: Db, options: { disableRateLimit?: boolean }
   }));
 
   // ── comment_votes ───────────────────────────────────────────
+  /** GET /api/comments/votes?ids=a,b,c - batch counts (must precede /:id/votes). */
+  r.get('/comments/votes', h((req, res) => {
+    const ids = String(req.query.ids ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean)
+      .slice(0, 100);
+    if (ids.length === 0) return fail(res, 400, 'invalid_ids');
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.prepare(`select comment_id, upvotes, downvotes from comment_vote_counts
+      where comment_id in (${placeholders})`).all(...ids) as Array<Row>;
+    const map = new Map(rows.map((r) => [String(r.comment_id), r]));
+    const items = ids.map((id) => {
+      const r = map.get(id);
+      return { comment_id: id, up: Number(r?.upvotes ?? 0), down: Number(r?.downvotes ?? 0) };
+    });
+    ok(res, { items });
+  }));
+
   r.get('/comments/:id/votes', h((req, res) => {
     const row = db.prepare('select * from comment_vote_counts where comment_id = ?').get(req.params.id) as Row | undefined;
     ok(res, { counts: row ?? { comment_id: req.params.id, upvotes: 0, downvotes: 0, score: 0 } });
