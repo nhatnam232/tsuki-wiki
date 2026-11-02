@@ -12,7 +12,10 @@ import { startMalWorker } from './services/malWorker';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 const PORT = resolvePort(); // PORT → SERVER_PORT (Pterodactyl) → 4000
-const HOST = process.env.HOST || undefined; // HOST=127.0.0.1 khi chạy sau cloudflared nội bộ
+// Bind loopback by default when the tunnel runs in-process: the public
+// allocation must never be reachable directly. Explicit HOST still wins.
+const HOST = process.env.HOST || (process.env.TUNNEL_TOKEN ? '127.0.0.1' : undefined);
+const EXPECT_LOOPBACK = Boolean(process.env.TUNNEL_TOKEN) && HOST === '127.0.0.1';
 
 /**
  * Chạy Cloudflare Tunnel *bên trong* container (TUNNEL_TOKEN có trong env).
@@ -23,6 +26,13 @@ const HOST = process.env.HOST || undefined; // HOST=127.0.0.1 khi chạy sau clo
  * loopback nên port allocation không còn truy cập được từ internet.
  */
 let tunnel: ChildProcess | null = null;
+let tunnelStopping = false;
+let tunnelBackoff = 1000;
+
+/**
+ * Supervise cloudflared: if it dies the whole site is unreachable (the app only
+ * listens on loopback), so restart with capped exponential backoff.
+ */
 function startTunnel(): void {
   const token = process.env.TUNNEL_TOKEN;
   if (!token) return;
@@ -30,10 +40,22 @@ function startTunnel(): void {
     stdio: 'inherit',
     env: { ...process.env },
   });
-  tunnel.on('exit', (code) => {
-    process.stderr.write(`[tunnel] cloudflared exited code=${code}\n`);
+  tunnel.on('exit', (code, signal) => {
     tunnel = null;
+    if (tunnelStopping) return;
+    process.stderr.write(
+      `[tunnel] cloudflared exited code=${code} signal=${signal ?? '-'}, restarting in ${tunnelBackoff}ms\n`
+    );
+    const delay = tunnelBackoff;
+    tunnelBackoff = Math.min(tunnelBackoff * 2, 30_000);
+    setTimeout(() => {
+      if (!tunnelStopping) startTunnel();
+    }, delay).unref();
   });
+  // A process that stayed up for a while resets the backoff.
+  setTimeout(() => {
+    if (tunnel) tunnelBackoff = 1000;
+  }, 60_000).unref();
 }
 
 function main(): void {
@@ -48,6 +70,11 @@ function main(): void {
   const app = createApp({ db });
   const onListening = () => {
     process.stderr.write(`[server-v2] listening on ${HOST ?? '0.0.0.0'}:${PORT}\n`);
+    if (!EXPECT_LOOPBACK && process.env.NODE_ENV === 'production') {
+      process.stderr.write(
+        '[server-v2] WARNING: TUNNEL_TOKEN set but not bound to 127.0.0.1 - the allocation port is publicly reachable\n'
+      );
+    }
   };
   const server = HOST ? app.listen(PORT, HOST, onListening) : app.listen(PORT, onListening);
 
@@ -58,6 +85,7 @@ function main(): void {
   const shutdown = (signal: string): void => {
     process.stderr.write(`[server-v2] ${signal} received, shutting down\n`);
     closeWebSocket();
+    tunnelStopping = true;
     tunnel?.kill('SIGTERM');
     server.close(() => {
       try {
