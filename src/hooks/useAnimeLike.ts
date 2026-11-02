@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, favorites as favoritesApi } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { useToast } from '@/providers/ToastProvider'
@@ -10,9 +10,9 @@ export type LikableAnime = AnimeFavorite
 /**
  * Unified like/favorite hook:
  * - Guests: localStorage via zustand store (instant, offline-friendly)
- * - Logged-in users: DB row in `favorites` table (synced, public counter)
+ * - Logged-in users: row in `favorites` via the backend API (synced, public counter)
  *
- * On sign-in we push any guest favorites up to the DB (best-effort).
+ * On sign-in we push any guest favourites up to the API (best-effort).
  */
 export function useAnimeLike(anime: LikableAnime | null | undefined) {
   const { user } = useAuth()
@@ -25,19 +25,19 @@ export function useAnimeLike(anime: LikableAnime | null | undefined) {
 
   const animeId = anime?.id ?? null
 
-  // Load server state
+  // Load public count + whether this user already liked it.
   useEffect(() => {
-    if (!isSupabaseConfigured || !animeId) return
+    if (!API_READY || !animeId) return
     let cancelled = false
 
-    const loadCount = async () => {
-      const { count: c } = await supabase
-        .from('favorites')
-        .select('*', { count: 'exact', head: true })
-        .eq('anime_id', animeId)
-      if (!cancelled) setCount(c ?? 0)
-    }
-    void loadCount()
+    favoritesApi
+      .count(animeId)
+      .then((res) => {
+        if (!cancelled) setCount(res.count ?? 0)
+      })
+      .catch(() => {
+        if (!cancelled) setCount(0)
+      })
 
     if (!user) {
       setServerLiked(null)
@@ -46,14 +46,14 @@ export function useAnimeLike(anime: LikableAnime | null | undefined) {
       }
     }
 
-    supabase
-      .from('favorites')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('anime_id', animeId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!cancelled) setServerLiked(Boolean(data))
+    favoritesApi
+      .list()
+      .then((res) => {
+        if (cancelled) return
+        setServerLiked((res.items ?? []).some((row) => row.anime_id === animeId))
+      })
+      .catch(() => {
+        if (!cancelled) setServerLiked(false)
       })
 
     return () => {
@@ -61,24 +61,19 @@ export function useAnimeLike(anime: LikableAnime | null | undefined) {
     }
   }, [animeId, user])
 
-  // On sign-in, push local favorites up (best-effort, one-shot)
+  // On sign-in, push local favourites up (best-effort, one-shot).
   useEffect(() => {
-    if (!user || !isSupabaseConfigured || favorites.length === 0) return
+    if (!user || !API_READY || favorites.length === 0) return
     const syncedKey = `anm-synced-${user.id}`
     if (localStorage.getItem(syncedKey)) return
 
-    const rows = favorites.map((f) => ({
-      user_id: user.id,
-      anime_id: f.id,
-      anime_title: f.title,
-      anime_cover: f.cover_image,
-    }))
-    supabase
-      .from('favorites')
-      .upsert(rows, { onConflict: 'user_id,anime_id', ignoreDuplicates: true })
-      .then(({ error }) => {
-        if (!error) localStorage.setItem(syncedKey, '1')
-      })
+    Promise.all(
+      favorites.map((f) =>
+        favoritesApi
+          .add({ anime_id: f.id, anime_title: f.title, anime_cover: f.cover_image ?? undefined })
+          .catch(() => null),
+      ),
+    ).then(() => localStorage.setItem(syncedKey, '1'))
   }, [user, favorites])
 
   const liked = user ? serverLiked === true : isFavorite(animeId ?? -1)
@@ -88,16 +83,10 @@ export function useAnimeLike(anime: LikableAnime | null | undefined) {
     if (!user) {
       if (isFavorite(anime.id)) {
         removeFavorite(anime.id)
-        toast.info(
-          lang === 'vi' ? 'Đã bỏ yêu thích' : 'Removed from favorites',
-          anime.title,
-        )
+        toast.info(lang === 'vi' ? 'Đã bỏ yêu thích' : 'Removed from favorites', anime.title)
       } else {
         addFavorite(anime)
-        toast.success(
-          lang === 'vi' ? 'Đã lưu vào yêu thích' : 'Saved to favorites',
-          anime.title,
-        )
+        toast.success(lang === 'vi' ? 'Đã lưu vào yêu thích' : 'Saved to favorites', anime.title)
       }
       return
     }
@@ -105,45 +94,25 @@ export function useAnimeLike(anime: LikableAnime | null | undefined) {
     setBusy(true)
     try {
       if (serverLiked) {
-        const { error } = await supabase
-          .from('favorites')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('anime_id', anime.id)
-        if (error) {
-          toast.error(
-            lang === 'vi' ? 'Không thể bỏ yêu thích' : 'Could not remove favorite',
-            error.message,
-          )
-        } else {
-          setServerLiked(false)
-          setCount((c) => (typeof c === 'number' ? Math.max(0, c - 1) : c))
-          toast.info(
-            lang === 'vi' ? 'Đã bỏ yêu thích' : 'Removed from favorites',
-            anime.title,
-          )
-        }
+        await favoritesApi.remove(anime.id)
+        setServerLiked(false)
+        setCount((c) => (typeof c === 'number' ? Math.max(0, c - 1) : c))
+        toast.info(lang === 'vi' ? 'Đã bỏ yêu thích' : 'Removed from favorites', anime.title)
       } else {
-        const { error } = await supabase.from('favorites').insert({
-          user_id: user.id,
+        await favoritesApi.add({
           anime_id: anime.id,
           anime_title: anime.title,
-          anime_cover: anime.cover_image,
+          anime_cover: anime.cover_image ?? undefined,
         })
-        if (error) {
-          toast.error(
-            lang === 'vi' ? 'Không thể lưu yêu thích' : 'Could not save favorite',
-            error.message,
-          )
-        } else {
-          setServerLiked(true)
-          setCount((c) => (typeof c === 'number' ? c + 1 : c))
-          toast.success(
-            lang === 'vi' ? 'Đã lưu vào yêu thích' : 'Saved to favorites',
-            anime.title,
-          )
-        }
+        setServerLiked(true)
+        setCount((c) => (typeof c === 'number' ? c + 1 : c))
+        toast.success(lang === 'vi' ? 'Đã lưu vào yêu thích' : 'Saved to favorites', anime.title)
       }
+    } catch (err) {
+      toast.error(
+        lang === 'vi' ? 'Không thể cập nhật yêu thích' : 'Could not update favorite',
+        err instanceof Error ? err.message : 'error',
+      )
     } finally {
       setBusy(false)
     }
@@ -154,6 +123,6 @@ export function useAnimeLike(anime: LikableAnime | null | undefined) {
     toggle,
     busy,
     count,
-    requiresAuth: !user && isSupabaseConfigured,
+    requiresAuth: !user && API_READY,
   }
 }

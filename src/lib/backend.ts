@@ -188,11 +188,18 @@ export const library = {
     post<{ success: boolean; item: LibraryEntry }>('/library', entry),
   update: (animeId: number, fields: Partial<LibraryEntry>) =>
     patch<{ success: boolean; item: LibraryEntry }>('/library/' + animeId, fields),
+  get: (animeId: number) =>
+    get<{ success: boolean; item: LibraryEntry }>('/library/' + animeId),
   remove: (animeId: number) => del<{ success: boolean }>('/library/' + animeId),
   stats: () => get<{ success: boolean; stats: Record<string, number> }>('/library/stats'),
 }
 
 export const favorites = {
+  /** Tổng lượt favorite công khai của 1 anime (GET /api/favorites/count). */
+  count: (animeId: number) =>
+    get<{ success: boolean; anime_id: number; count: number }>(
+      '/favorites/count?anime_id=' + encodeURIComponent(String(animeId)),
+    ),
   list: () => get<{ success: boolean; items: FavoriteEntry[] }>('/favorites'),
   add: (anime: { anime_id: number; anime_title?: string; anime_cover?: string }) =>
     post<{ success: boolean }>('/favorites', anime),

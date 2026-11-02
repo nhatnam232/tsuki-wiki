@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, connectRealtime, notifications as notificationsApi } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 
 export type NotificationKind = 'new_episode' | 'system' | 'reply'
@@ -41,12 +41,10 @@ const NotificationsContext = createContext<Ctx | null>(null)
 /**
  * Centralised notifications feed for the signed-in user.
  *
- * - Loads the most-recent 30 entries from `notifications` table on mount and
- *   when the user changes.
- * - Subscribes to realtime INSERT events so the bell badge updates without
- *   needing a refresh — important UX given the cron job inserts new-episode
- *   rows asynchronously.
- * - Falls back to a polling timer (60s) if realtime isn't available.
+ * - Loads the most-recent 30 entries from the backend on mount / user change.
+ * - Subscribes to the `notifications:<uid>` WebSocket room so the bell badge
+ *   updates as soon as the server creates a row.
+ * - Keeps a 60s polling fallback in case the socket is unavailable.
  */
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
@@ -54,91 +52,77 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false)
 
   const refresh = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) {
+    if (!user || !API_READY) {
       setItems([])
       return
     }
     setLoading(true)
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(30)
-    setLoading(false)
-    if (error) {
-      // Silently degrade — table might not be migrated yet on dev DB.
-      if (error.code !== '42P01') {
-        console.warn('[notifications] load failed', error.message)
-      }
+    try {
+      const res = await notificationsApi.list({ limit: 30 })
+      setItems((res.items ?? []) as NotificationItem[])
+    } catch (err) {
+      console.warn('[notifications] load failed', err instanceof Error ? err.message : err)
       setItems([])
-      return
+    } finally {
+      setLoading(false)
     }
-    setItems((data ?? []) as NotificationItem[])
   }, [user])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
-  // Realtime subscribe (INSERT/UPDATE/DELETE on notifications)
+  // Realtime room + polling fallback.
   useEffect(() => {
-    if (!user || !isSupabaseConfigured) return
-    const ch = supabase
-      .channel(`notifications-${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
-        () => void refresh(),
-      )
-      .subscribe()
-    // Polling fallback every 60s in case realtime is disabled
+    if (!user || !API_READY) return
+    const dispose = connectRealtime([`notifications:${user.id}`], (event) => {
+      if (event.type === 'notification:new') void refresh()
+    })
     const interval = window.setInterval(() => void refresh(), 60_000)
     return () => {
-      supabase.removeChannel(ch)
+      dispose()
       window.clearInterval(interval)
     }
   }, [user, refresh])
 
   const markRead = useCallback(
     async (id: string) => {
-      if (!user || !isSupabaseConfigured) return
-      // Optimistic update
+      if (!user || !API_READY) return
       setItems((prev) =>
         prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)),
       )
-      const { error } = await supabase
-        .from('notifications')
-        .update({ read_at: new Date().toISOString() })
-        .eq('id', id)
-        .eq('user_id', user.id)
-      if (error) console.warn('[notifications] markRead failed', error.message)
+      try {
+        await notificationsApi.markRead(id)
+      } catch (err) {
+        console.warn('[notifications] markRead failed', err instanceof Error ? err.message : err)
+      }
     },
     [user],
   )
 
   const markAllRead = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) return
+    if (!user || !API_READY) return
     const now = new Date().toISOString()
+    const unread = items.filter((n) => !n.read_at).map((n) => n.id)
     setItems((prev) => prev.map((n) => (n.read_at ? n : { ...n, read_at: now })))
-    const { error } = await supabase
-      .from('notifications')
-      .update({ read_at: now })
-      .eq('user_id', user.id)
-      .is('read_at', null)
-    if (error) console.warn('[notifications] markAllRead failed', error.message)
-  }, [user])
+    await Promise.all(
+      unread.map((id) =>
+        notificationsApi.markRead(id).catch((err: unknown) => {
+          console.warn('[notifications] markAllRead failed', err)
+        }),
+      ),
+    )
+  }, [user, items])
 
   const dismiss = useCallback(
     async (id: string) => {
-      if (!user || !isSupabaseConfigured) return
+      if (!user || !API_READY) return
       setItems((prev) => prev.filter((n) => n.id !== id))
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id)
-      if (error) console.warn('[notifications] dismiss failed', error.message)
+      try {
+        await notificationsApi.remove(id)
+      } catch (err) {
+        console.warn('[notifications] dismiss failed', err instanceof Error ? err.message : err)
+      }
     },
     [user],
   )
@@ -156,8 +140,6 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 export function useNotifications(): Ctx {
   const ctx = useContext(NotificationsContext)
   if (!ctx) {
-    // Permissive: components can be mounted in pages without the provider
-    // (e.g. ToS, NotFound) — return a noop shape.
     return {
       items: [],
       unreadCount: 0,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle2, Lock, Trophy } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { API_READY, quests as questsApi } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 import { useLangContext } from '@/providers/LangProvider'
 import { BADGES, type BadgeId } from '@/lib/badges'
@@ -33,7 +33,7 @@ export default function QuestsPanel() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!user || !supabase) {
+    if (!user || !API_READY) {
       setLoading(false)
       return
     }
@@ -41,14 +41,11 @@ export default function QuestsPanel() {
 
     ;(async () => {
       setLoading(true)
-      const [qRes, pRes] = await Promise.all([
-        supabase.from('quests').select('*').eq('is_active', true).order('category'),
-        supabase.from('user_quest_progress').select('quest_id, progress, completed_at').eq('user_id', user.id),
-      ])
+      const [qRes, pRes] = await Promise.all([questsApi.list(), questsApi.progress()])
       if (cancelled) return
-      setQuests((qRes.data ?? []) as Quest[])
+      setQuests((qRes.items ?? []) as Quest[])
       const map = new Map<string, Progress>()
-      for (const row of (pRes.data ?? []) as Progress[]) {
+      for (const row of (pRes.items ?? []) as Progress[]) {
         map.set(row.quest_id, row)
       }
       setProgress(map)

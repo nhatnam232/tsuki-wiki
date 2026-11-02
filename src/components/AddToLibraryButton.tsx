@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { BookmarkPlus, Check, ChevronDown, Loader2, Trash2, X } from 'lucide-react'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { API_READY, library } from '@/lib/backend'
 import { useAuth } from '@/providers/AuthProvider'
 import { useToast } from '@/providers/ToastProvider'
 import { useLangContext } from '@/providers/LangProvider'
@@ -74,24 +74,25 @@ export default function AddToLibraryButton({
 
   // Initial fetch.
   useEffect(() => {
-    if (!user || !isSupabaseConfigured) {
+    if (!user || !API_READY) {
       setLoading(false)
       return
     }
     let cancelled = false
     setLoading(true)
-    supabase
-      .from('user_library')
-      .select('status')
-      .eq('user_id', user.id)
-      .eq('anime_id', animeId)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    library
+      .get(animeId)
+      .then((res) => {
         if (cancelled) return
-        if (error && error.code !== 'PGRST116') {
-          console.warn('[AddToLibrary] read failed', error)
+        setCurrentStatus(((res.item as { status?: WatchStatus })?.status) ?? null)
+        setLoading(false)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        if ((err as { status?: number })?.status !== 404) {
+          console.warn('[AddToLibrary] read failed', err)
         }
-        setCurrentStatus((data?.status as WatchStatus | undefined) ?? null)
+        setCurrentStatus(null)
         setLoading(false)
       })
     return () => {
@@ -104,23 +105,21 @@ export default function AddToLibraryButton({
       onAuthRequired?.()
       return
     }
-    if (!isSupabaseConfigured) return
+    if (!API_READY) return
     setBusyKey(status)
     const previous = currentStatus
     setCurrentStatus(status)
 
-    const { error } = await supabase.from('user_library').upsert(
-      {
-        user_id: user.id,
+    const error = await library
+      .upsert({
         anime_id: animeId,
         anime_title: animeTitle,
         anime_cover: animeCover ?? null,
         anime_episodes: animeEpisodes ?? null,
         status,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id,anime_id' },
-    )
+      })
+      .then(() => null)
+      .catch((err: unknown) => err as { code?: string; message?: string })
     setBusyKey(null)
     setOpen(false)
 
@@ -152,11 +151,10 @@ export default function AddToLibraryButton({
     setBusyKey('remove')
     const previous = currentStatus
     setCurrentStatus(null)
-    const { error } = await supabase
-      .from('user_library')
-      .delete()
-      .eq('user_id', user.id)
-      .eq('anime_id', animeId)
+    const error = await library
+      .remove(animeId)
+      .then(() => null)
+      .catch((err: unknown) => err as { message?: string })
     setBusyKey(null)
     setOpen(false)
     if (error) {
