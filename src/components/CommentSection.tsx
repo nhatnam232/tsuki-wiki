@@ -90,7 +90,6 @@ export default function CommentSection({ entityType, entityId }: Props) {
   const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
-  const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const viewerIsMod = isModerator(profile)
 

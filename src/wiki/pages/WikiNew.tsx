@@ -7,8 +7,6 @@ import {
   BookOpen,
   CheckCircle2,
   Image as ImageIcon,
-  Loader2,
-  Save,
   Sparkles,
   UserPlus,
 } from 'lucide-react'

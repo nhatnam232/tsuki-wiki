@@ -48,7 +48,7 @@ export default function PWAInstaller() {
           const ts = Number(raw)
           if (ts && Date.now() - ts < DISMISS_TTL_MS) return
         }
-      } catch {}
+      } catch { /* storage blocked */ }
       setDeferredPrompt(e as InstallPromptEvent)
     }
     const onAppInstalled = () => {
@@ -70,7 +70,7 @@ export default function PWAInstaller() {
       await deferredPrompt.prompt()
       const result = await deferredPrompt.userChoice
       if (result.outcome === 'dismissed') {
-        try { localStorage.setItem(DISMISS_KEY, String(Date.now())) } catch {}
+        try { localStorage.setItem(DISMISS_KEY, String(Date.now())) } catch { /* storage blocked */ }
       }
       setDeferredPrompt(null)
     } catch (e) {
@@ -79,7 +79,7 @@ export default function PWAInstaller() {
   }
 
   const handleDismiss = () => {
-    try { localStorage.setItem(DISMISS_KEY, String(Date.now())) } catch {}
+    try { localStorage.setItem(DISMISS_KEY, String(Date.now())) } catch { /* storage blocked */ }
     setDeferredPrompt(null)
   }
 

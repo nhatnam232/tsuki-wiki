@@ -14,7 +14,7 @@ type Props = {
 
 export default function AuthModal({ open, onClose, initialMode = 'signin' }: Props) {
   const { signInWithGoogle, signInWithEmail, signUpWithEmail, configured } = useAuth()
-  const { t, lang } = useLangContext()
+  const { t } = useLangContext()
   const hCaptchaSiteKey = import.meta.env.VITE_HCAPTCHA_SITE_KEY
   const [mode, setMode] = useState<Mode>(initialMode)
   const [email, setEmail] = useState('')

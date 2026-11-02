@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
-import { ChevronDown, GitCompareArrows, Plus, Search, Star, Trophy, Users, X } from 'lucide-react'
+import { GitCompareArrows, Plus, Search, Star, Trophy, Users, X } from 'lucide-react'
 import Layout from '@/components/Layout'
 import Breadcrumbs from '@/components/Breadcrumbs'
 import ReloadLink from '@/components/ReloadLink'

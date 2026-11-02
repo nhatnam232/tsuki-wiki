@@ -51,7 +51,7 @@ export default function AdminPasswordGate({ children }: Props) {
       if (cached.date === today && cached.uid === user?.id) {
         setUnlocked(true)
       }
-    } catch {}
+    } catch { /* storage blocked */ }
   }, [user?.id])
 
   if (!user) {
@@ -101,7 +101,7 @@ export default function AdminPasswordGate({ children }: Props) {
             TOKEN_STORAGE_KEY,
             JSON.stringify({ date: today, uid: user.id }),
           )
-        } catch {}
+        } catch { /* storage blocked */ }
         setUnlocked(true)
       } else {
         setError(

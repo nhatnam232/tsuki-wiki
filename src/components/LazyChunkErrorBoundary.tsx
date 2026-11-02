@@ -45,7 +45,7 @@ export default class LazyChunkErrorBoundary extends Component<Props, State> {
   }
 
   reset = () => {
-    try { sessionStorage.removeItem(RELOAD_FLAG) } catch {}
+    try { sessionStorage.removeItem(RELOAD_FLAG) } catch { /* storage blocked */ }
     this.setState({ hasError: false })
     window.location.reload()
   }

@@ -122,6 +122,7 @@ export function useWikipediaSections(
         if (cancelled) return
         setState({ data: null, loading: false, error: e?.message || 'Fetch failed' })
       })
+    return () => { cancelled = true }
   }, [slug, lang, enabled])
 
   return state

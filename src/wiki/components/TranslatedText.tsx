@@ -60,7 +60,7 @@ function readCache(): Record<string, string> {
 }
 function writeCache(cache: Record<string, string>) {
   try { localStorage.setItem(TR_CACHE_KEY, JSON.stringify(cache)) }
-  catch {}
+  catch { /* storage blocked */ }
 }
 
 function EnglishRenderer({

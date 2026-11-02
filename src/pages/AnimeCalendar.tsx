@@ -5,7 +5,6 @@ import ReloadLink from '@/components/ReloadLink'
 import Breadcrumbs from '@/components/Breadcrumbs'
 import { useLangContext } from '@/providers/LangProvider'
 import { fetchAnimeSchedule } from '@/lib/api'
-import { localizeSeason, localizeStatus } from '@/lib/formatters'
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -142,7 +141,7 @@ interface ScheduleDayColumnProps {
   isToday: boolean
 }
 
-function ScheduleDayColumn({ dayLabel, dayKey, animeList, isToday }: ScheduleDayColumnProps) {
+function ScheduleDayColumn({ dayLabel, dayKey: _dayKey, animeList, isToday }: ScheduleDayColumnProps) {
   return (
     <div
       className={`flex flex-col rounded-2xl border transition-all ${

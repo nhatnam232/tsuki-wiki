@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookmarkPlus, Heart, Loader2, Lock, Plus, Search, Sparkles, Trash2, Unlock, Users } from 'lucide-react'
+import { BookmarkPlus, Heart, Loader2, Lock, Plus, Sparkles, Unlock, Users } from 'lucide-react'
 import Layout from '@/components/Layout'
 import Breadcrumbs from '@/components/Breadcrumbs'
 import ReloadLink from '@/components/ReloadLink'
