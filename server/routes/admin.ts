@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { Router, type Request, type Response } from 'express'
 import { createClient } from '@supabase/supabase-js'
 
@@ -43,42 +44,37 @@ async function getCronSecret(): Promise<string | null> {
 }
 
 /**
- * Authentication strategy for /api/admin/rotate-password:
+ * Authentication strategy for /api/admin/rotate-password — exactly ONE way in:
  *
- *  ✅ ACCEPT if the request has Vercel's special `x-vercel-cron-signature`
- *      header (only set by Vercel cron — can't be forged from outside).
- *  ✅ ACCEPT if the request has User-Agent starting with `vercel-cron/`.
- *  ✅ ACCEPT if `?secret=` (or `x-cron-secret` header) matches our cached
- *      cron secret. Useful for manual curl during testing or for the
- *      Supabase pg_cron alternative.
+ *  ✅ ACCEPT if `x-cron-secret` header (or `?secret=`) matches the stored
+ *      cron secret, compared in constant time.
  *
- * The user therefore needs to do ZERO env-var configuration for the cron to
- * work — Vercel sets the headers automatically once the cron is registered
- * in vercel.json.
+ *  ❌ REJECT everything else. `x-vercel-cron-signature` and
+ *      `User-Agent: vercel-cron/*` used to be accepted and were a full
+ *      auth bypass: both are client-controlled headers, so anyone could
+ *      rotate the admin password.
  */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8')
+  const bb = Buffer.from(b, 'utf8')
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
+
 async function authorizeRequest(req: Request): Promise<{ ok: boolean; reason?: string }> {
-  // 1. Vercel cron signature (most secure — Vercel sets this internally)
-  if (req.headers['x-vercel-cron-signature']) return { ok: true }
-
-  // 2. User-Agent fallback (Vercel cron sends `vercel-cron/1.0` UA)
-  const ua = String(req.headers['user-agent'] ?? '').toLowerCase()
-  if (ua.startsWith('vercel-cron/')) return { ok: true }
-
-  // 3. Manual override (curl / pg_cron / opt-in env CRON_SECRET)
   const provided =
     (req.headers['x-cron-secret'] as string | undefined) ||
     (req.query.secret as string | undefined)
-  if (provided) {
-    const secret = await getCronSecret()
-    if (secret && provided === secret) return { ok: true }
-    return { ok: false, reason: 'Invalid cron secret' }
-  }
+  if (!provided) return { ok: false, reason: 'Missing x-cron-secret' }
 
-  return { ok: false, reason: 'No cron credentials provided' }
+  const secret = await getCronSecret()
+  if (!secret) return { ok: false, reason: 'Cron secret not configured' }
+  if (!safeEqual(provided, secret)) return { ok: false, reason: 'Invalid cron secret' }
+  return { ok: true }
 }
 
 /**
- * GET / POST /api/admin/rotate-password
+ * POST /api/admin/rotate-password
  *
  * Vercel cron calls this every day at 00:00 UTC (see vercel.json). It:
  *   1. Generates a fresh 16-char password via the Postgres RPC.
@@ -87,12 +83,12 @@ async function authorizeRequest(req: Request): Promise<{ ok: boolean; reason?: s
  *   4. Returns a JSON status (NEVER includes the plaintext).
  *
  * Manual usage:
- *   curl https://YOUR-SITE.vercel.app/api/admin/rotate-password \
+ *   curl -X POST https://YOUR-SITE.vercel.app/api/admin/rotate-password \
  *        -H "x-cron-secret: $(supabase secret)"
  *
  * But you usually never need to call this manually — Vercel cron handles it.
  */
-router.all('/rotate-password', async (req: Request, res: Response) => {
+router.post('/rotate-password', async (req: Request, res: Response) => {
   const supa = getSupabase()
   if (!supa) {
     return res.status(500).json({
