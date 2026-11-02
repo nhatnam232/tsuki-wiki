@@ -19,8 +19,9 @@
 | `d188f0e` | feat(server-v2): notifications, MAL worker, cloudflare gate, snake_case aliases |
 | `56c3798` | fix(security): gate origin by socket IP, cap rate-limit map, lock health/deep |
 | `69a6573` | fix(security): derive client IP from socket/cf-connecting-ip, never XFF (G9 fix, test 101/101) |
+| `38e787f` | fix(security): fail-closed proxy allowlist, log real client IP (G9 mitigated, test 101/101) |
 
-`main` **ahead `origin/main` 8 commit**, chưa push (mới nhất `69a6573`). Tại thời điểm planner kiểm 10:27: `git status` còn **9 file M chưa commit** (dev đang sửa `admin/routes.ts`, `auth/*`, `security.ts`, test) — chưa sạch; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **ahead `origin/main` 9 commit**, chưa push (mới nhất `38e787f`). Tại thời điểm planner kiểm 10:31 (trước khi planner sửa docs): `git status` **sạch**; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -175,9 +176,9 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - 73 policy nhưng nhiều policy trùng logic (own/read-all) → gom helper, tránh copy-paste 73 lần; test vẫn phải đủ 73 case để không mất dấu.
 - Trigger counter + soft delete dễ lệch khi update nhiều lần `is_deleted` → test toggle 2 chiều.
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
-- **[P0 — CHƯA MITIGATED, chặn cutover] Origin bypass `cf-connecting-ip`:** domain đã sạch (XFF xoay → 429; spoof header → 403 CF error 1000) nhưng origin `http://103.69.75.49:25200/api/health` → **200** (phải 403) và `cf-connecting-ip` xoay ×6 → **400×6** trên bucket đầy ⇒ bypass rate-limit qua origin. Nguyên nhân: prod `ALLOW_DIRECT=1`/allowlist mở ⇒ peer trusted. Code working tree đã fail-closed (`security.ts:112-120`) nhưng prod chưa khớp. **Fix:** bỏ `ALLOW_DIRECT`; `TRUSTED_PROXIES`=host tunnel/CF; đóng port origin; bổ sung 2 biến vào `.env.example`; `req.ip`→`clientIpOf(req)` ở rotate limiter (`admin/routes.ts:142`) + audit/sessions IP; cap bucket. **Điều kiện đóng:** origin health → **403**.
+- **[P0 → MITIGATED 10:30, build `38e787f`] Bypass rate-limit qua XFF/origin:** domain bucket đầy + XFF xoay → **429**; origin từ **IP ngoài allowlist → 403 `untrusted_proxy`** trên 3 route (fetch ngoài `r.jina.ai`); domain health 200. Prod: `TRUSTED_PROXIES=116.66.214.191`, không `ALLOW_DIRECT`; fail-closed allowlist + `clientIpOf()` cho rotate limiter/audit. **Vantage:** egress sandbox chính là `116.66.214.191` (host tunnel) ⇒ đo trực tiếp từ đây luôn 200/trusted, không dùng để kết luận. **Fragility:** allowlist là IP ISP động — đổi IP mạng phải cập nhật + restart, nếu không toàn site 403. **Backlog:** cloudflared vào container + bind `127.0.0.1`; cap bucket thay prune O(N).
 - **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
-- **[P2] Google OAuth production đang 503 `oauth_not_configured`** — cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu muốn parity với Supabase trước cutover.
+- **[P2/G10 — quyết định sản phẩm] Google OAuth production đang 503 `oauth_not_configured`** (verify 10:33) — cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu launch cần Google login; nếu không, phải thông báo user chỉ đăng nhập email/password.
 
 ---
 
