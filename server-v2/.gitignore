@@ -1,0 +1,11 @@
+# server-v2 runtime artifacts (repo .gitignore đã bỏ qua node_modules/dist ở mọi depth,
+# file này để rõ ràng khi tách server-v2 thành repo riêng sau này)
+node_modules/
+dist/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
