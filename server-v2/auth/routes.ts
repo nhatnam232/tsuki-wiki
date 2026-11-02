@@ -1,3 +1,4 @@
+import { clientIpOf } from '../middleware/security';
 /**
  * Auth routes — Phase 0 / Slice 2.
  *
@@ -162,7 +163,7 @@ export function createAuthRouter(db: Db, options: AuthRouterOptions = {}): Route
       const tokens = issueSession(db, {
         userId,
         userAgent: req.headers['user-agent'] ?? null,
-        ip: req.ip ?? null,
+        ip: clientIpOf(req) ?? null,
       });
       setAuthCookies(res, tokens);
 
@@ -227,7 +228,7 @@ export function createAuthRouter(db: Db, options: AuthRouterOptions = {}): Route
       const tokens = issueSession(db, {
         userId: user.id,
         userAgent: req.headers['user-agent'] ?? null,
-        ip: req.ip ?? null,
+        ip: clientIpOf(req) ?? null,
       });
       setAuthCookies(res, tokens);
 
@@ -251,7 +252,7 @@ export function createAuthRouter(db: Db, options: AuthRouterOptions = {}): Route
 
     const result = rotateSession(db, token, {
       userAgent: req.headers['user-agent'] ?? null,
-      ip: req.ip ?? null,
+      ip: clientIpOf(req) ?? null,
     });
 
     if (!result.ok) {

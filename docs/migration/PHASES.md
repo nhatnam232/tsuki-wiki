@@ -16,8 +16,11 @@
 | `edc3d8d` | fix(admin): remove forgeable cron auth bypass |
 | `8c673f8` | feat(web): typed client cho server-v2 backend (`src/lib/backend.ts`, 407 dòng) |
 | `15097d6` | fix(admin): gate rotate-password trước transaction; target node20; thêm `CUTOVER.md`, `007_mal_attempts.sql`, `services/malWorker.ts` |
+| `d188f0e` | feat(server-v2): notifications, MAL worker, cloudflare gate, snake_case aliases |
+| `56c3798` | fix(security): gate origin by socket IP, cap rate-limit map, lock health/deep |
+| `69a6573` | fix(security): derive client IP from socket/cf-connecting-ip, never XFF (G9 fix, test 101/101) |
 
-`main` **ahead `origin/main` 5 commit**, chưa push. Tại thời điểm planner kiểm (2026-11-02 09:52 UTC) `git status --short` còn: ` M server-v2/test/schema-hardening.test.ts` + `?? server-v2/test/services.test.ts` (dev đang viết) — chưa gọi là “working tree sạch”; kiểm lại trước cutover. `root npm run lint` lúc này báo **2 error** trong `server-v2/test/services.test.ts` (unused `attachWebSocket`/`closeWebSocket`) — lỗi tạm do dev đang sửa, không phải docs.
+`main` **ahead `origin/main` 8 commit**, chưa push (mới nhất `69a6573`). Tại thời điểm planner kiểm 10:27: `git status` còn **9 file M chưa commit** (dev đang sửa `admin/routes.ts`, `auth/*`, `security.ts`, test) — chưa sạch; `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -172,7 +175,7 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - 73 policy nhưng nhiều policy trùng logic (own/read-all) → gom helper, tránh copy-paste 73 lần; test vẫn phải đủ 73 case để không mất dấu.
 - Trigger counter + soft delete dễ lệch khi update nhiều lần `is_deleted` → test toggle 2 chiều.
 - Quest/activity hook chạy sau transaction: nếu hook fail, dữ liệu chính đã commit → ghi log + retry, không rollback user action.
-- **[P0 — CHƯA FIX, chặn cutover] Bypass rate-limit qua domain bằng XFF (regression build 10:00+):** verify 10:14: domain `POST /api/auth/signup` không XFF → **429**, nhưng XFF xoay → **400** ⇒ bypass từ internet, không cần IP origin. Build <10:00 (09:52/10:01) còn an toàn (400×10 rồi 429) ⇒ regression do trust-proxy lấy 1 hop XFF. Fix đã có trong working tree **chưa deploy**: `app.set('trust proxy', false)` + `resolveClientIp()` (`middleware/security.ts:166-190`) — peer socket ∈ dải CF → `cf-connecting-ip`, peer lạ → `socket.remoteAddress`, bỏ XFF. Kèm: đóng origin (firewall dải CF), cap cứng bucket thay prune O(N) `rateLimit.ts:56`. **Hệ quả:** DoS 55k request (1.800→34 req/s) reachable từ internet; spoof `x-forwarded-proto` kích hoạt rotate plaintext. **Gate:** chỉ MITIGATED khi deploy fix + verify domain XFF xoay → vẫn 429.
+- **[P0 — CHƯA MITIGATED, chặn cutover] Origin bypass `cf-connecting-ip`:** domain đã sạch (XFF xoay → 429; spoof header → 403 CF error 1000) nhưng origin `http://103.69.75.49:25200/api/health` → **200** (phải 403) và `cf-connecting-ip` xoay ×6 → **400×6** trên bucket đầy ⇒ bypass rate-limit qua origin. Nguyên nhân: prod `ALLOW_DIRECT=1`/allowlist mở ⇒ peer trusted. Code working tree đã fail-closed (`security.ts:112-120`) nhưng prod chưa khớp. **Fix:** bỏ `ALLOW_DIRECT`; `TRUSTED_PROXIES`=host tunnel/CF; đóng port origin; bổ sung 2 biến vào `.env.example`; `req.ip`→`clientIpOf(req)` ở rotate limiter (`admin/routes.ts:142`) + audit/sessions IP; cap bucket. **Điều kiện đóng:** origin health → **403**.
 - **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
 - **[P2] Google OAuth production đang 503 `oauth_not_configured`** — cần set `GOOGLE_CLIENT_ID/SECRET/OAUTH_REDIRECT_URI` nếu muốn parity với Supabase trước cutover.
 

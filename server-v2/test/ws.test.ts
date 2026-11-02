@@ -1,4 +1,5 @@
 /** WebSocket realtime: auth 1008, 2 client cùng room <1s, cô lập notification, bỏ qua input. */
+process.env.TRUSTED_PROXIES = '127.0.0.1';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';

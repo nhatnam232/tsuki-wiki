@@ -1,3 +1,4 @@
+import { clientIpOf } from '../middleware/security';
 /**
  * Admin routes (Phase 0 bổ sung) — thay các RPC SECURITY DEFINER của Supabase.
  *
@@ -91,7 +92,7 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
           targetType: 'admin_password_rotate',
           targetId: today,
           reason: 'cron',
-          ip: req.ip ?? null,
+          ip: clientIpOf(req) ?? null,
           userAgent: req.headers['user-agent'] ?? null,
         });
       })();
@@ -122,7 +123,7 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
     name: 'admin:rotate',
     windowMs: envInt('ADMIN_ROTATE_WINDOW_MS', 60_000),
     max: envInt('ADMIN_ROTATE_MAX', 10),
-    keyGenerator: (req) => req.ip ?? 'unknown',
+    keyGenerator: (req) => clientIpOf(req),
     enabled: !rateDisabled,
   });
 
@@ -167,7 +168,7 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
           targetType: 'admin_password',
           targetId: today,
           reason: valid ? 'success' : 'failed',
-          ip: req.ip ?? null,
+          ip: clientIpOf(req) ?? null,
           userAgent: req.headers['user-agent'] ?? null,
         });
 
@@ -192,7 +193,7 @@ export function createAdminRouter(db: Db, options: AdminRouterOptions = {}): Rou
       targetType: 'system_secrets',
       targetId: 'cron_secret',
       reason: process.env.CRON_SECRET ? 'env' : 'db',
-      ip: req.ip ?? null,
+      ip: clientIpOf(req) ?? null,
       userAgent: req.headers['user-agent'] ?? null,
     });
     res.status(200).json({ success: true, source: process.env.CRON_SECRET ? 'env' : 'db', secret });

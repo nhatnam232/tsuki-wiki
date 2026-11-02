@@ -1,3 +1,4 @@
+import { clientIpOf } from '../middleware/security';
 /**
  * Google OAuth 2.0 Authorization Code + PKCE (không cài `google-auth-library`).
  *
@@ -370,7 +371,7 @@ export function googleCallback(db: Db): RequestHandler {
         const tokens = issueSession(db, {
           userId,
           userAgent: req.headers['user-agent'] ?? null,
-          ip: req.ip ?? null,
+          ip: clientIpOf(req) ?? null,
         });
         setAuthCookies(res, tokens);
 

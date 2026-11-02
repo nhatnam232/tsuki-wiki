@@ -109,7 +109,11 @@ export function trustedProxies(): string[] {
 
 export function isTrustedProxy(remoteAddress: string | undefined): boolean {
   const rules = trustedProxies();
-  if (rules.length === 0 || process.env.ALLOW_DIRECT === '1') return true;
+  // Fail-closed: no allowlist means "no peer is a proxy" (dev override:
+  // ALLOW_DIRECT=1). Keeping this in sync with resolveClientIp() matters - a
+  // mismatch here is what re-opened the XFF bypass on 2026-11-02.
+  if (process.env.ALLOW_DIRECT === '1') return true;
+  if (rules.length === 0) return false;
   if (!remoteAddress) return false;
   return rules.some((rule) => ipMatches(remoteAddress, rule));
 }

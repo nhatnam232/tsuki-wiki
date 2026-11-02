@@ -117,7 +117,11 @@ test('trusted proxy: spoof header KHÔNG vượt được gate (socket IP quyế
     assert.equal((await fetch(`${base}/api/health`)).status, 200, 'ALLOW_DIRECT=1 → bỏ qua');
     delete process.env.ALLOW_DIRECT;
     delete process.env.TRUSTED_PROXIES;
-    assert.equal((await fetch(`${base}/api/health`)).status, 200, 'không set env → không chặn');
+    assert.equal(
+      (await fetch(`${base}/api/health`)).status,
+      403,
+      'allowlist rỗng = fail-closed (không đoán proxy tin cậy)'
+    );
   } finally {
     delete process.env.TRUSTED_PROXIES;
     delete process.env.ALLOW_DIRECT;
@@ -129,6 +133,7 @@ test('trusted proxy: spoof header KHÔNG vượt được gate (socket IP quyế
 
 
 test('/api/health/deep chỉ owner: anon 401, user thường 403, owner 200', async () => {
+  process.env.TRUSTED_PROXIES = '127.0.0.1';
   const { db, close } = fresh();
   process.env.JWT_SECRET = 'svc-secret-0123456789abcdef0123456789';
   resetRateLimits();

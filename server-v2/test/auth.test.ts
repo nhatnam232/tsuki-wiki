@@ -2,6 +2,7 @@
  * HTTP integration test cho auth (dựng server thật trên port ngẫu nhiên + fetch).
  * Không dùng supertest (zero-dependency).
  */
+process.env.TRUSTED_PROXIES = '127.0.0.1';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';

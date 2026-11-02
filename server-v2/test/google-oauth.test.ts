@@ -3,6 +3,7 @@
  * token endpoint, ký id_token bằng RSA key sinh tại chỗ.
  * Nhờ vậy verify được cả chữ ký RS256, aud/iss/exp, upsert user, link theo email.
  */
+process.env.TRUSTED_PROXIES = '127.0.0.1';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign as signRsa } from 'node:crypto';
