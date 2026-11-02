@@ -15,6 +15,7 @@ import { currentDbPath, getDb, isWalEnabled, ping } from './db/index';
 import { createAuthRouter } from './auth/routes';
 import { requireAuth, requireRole } from './middleware/requireAuth';
 import { createAdminRouter } from './admin/routes';
+import { mountContentRoutes } from './content/index';
 import { createCoreRouter } from './routes/core';
 import { createExtrasRouter } from './routes/extras';
 import { createMediaRouter } from './media/routes';
@@ -103,6 +104,9 @@ export function createApp(deps: AppDeps = {}): express.Express {
   // Upload phải mount TRƯỚC router static /media và cần auth.
   app.use('/api/media', requireSameOrigin, requireAuth(db), createUploadRouter());
   app.use('/media', createMediaRouter());
+
+  // Content API (AniList/Jikan proxying, translation, wikipedia import).
+  mountContentRoutes(app);
 
   // 404 JSON cho mọi path /api/* chưa mount.
   app.use('/api', (_req: Request, res: Response) => {

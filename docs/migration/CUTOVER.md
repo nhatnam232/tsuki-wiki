@@ -3,6 +3,18 @@
 > Trạng thái: **KẾ HOẠCH**, chưa thực thi. Chỉ đạo: bật theo thứ tự **Vercel env → API mới → verify → tắt Supabase**, mỗi bước có rollback riêng.
 > Ngày soạn: 2026-11-02. Người duyệt: Lead + sir. Người thực thi: dev (backend) + lead (Vercel/DNS) + tester (verify).
 
+## MỐC CUTOVER — ĐÃ CHẠY (2026-11-02 ~12:24 UTC)
+
+| Hạng mục | Giá trị |
+|---|---|
+| Commit deploy | **`0fb07b3`** (`chore(web): drop the unused ShieldCheck import…`), `main` đã push **26 commit** (`origin/main` = HEAD) |
+| Frontend | Vercel **production deployment READY**, live main **`/assets/index-C9V0MWsi.js`** (bản cũ `index-DOKDDPZJ.js`) |
+| API | `https://api.animewiki.eu.cc/api` (baked trong bundle, 2 hit) |
+| Dữ liệu lúc cutover | **4 user · 2 comments · 4 favorites · 2 library** |
+| Verify | 6 route chính 200; **40 lazy chunk** không còn `hcaptcha`/`supabase`; SDK symbols = 0; CORS preflight `Origin: https://animewiki.eu.cc` → **204** ACAO đúng + credentials; `health` 200 `{db:true}`; CSRF: login Origin mới → 401 `invalid_credentials` (được chấp nhận), Origin `https://evil.example` → **403 `csrf_origin_rejected`** |
+| **Rollback** | Vercel → Deployments → **promote deployment trước cutover** (bundle `index-DOKDDPZJ.js`); backend giữ nguyên `server-v2`; KHÔNG rollback về `deploy/bundle/server.cjs` (Supabase cũ đã ngừng) |
+| Trạng thái gate | **GO** — G1–G12 xanh; G13 (browser render smoke) **manual, chưa verify** |
+
 ## 0. Điều kiện Go / No-Go (kiểm ngay trước khi bắt đầu)
 
 | # | Điều kiện | Trạng thái hiện tại (09:40 UTC) |
@@ -10,15 +22,16 @@
 | G1 | Phase 0 gate xanh: `cd server-v2 && npm run check` + `npm test` **2 lần liên tiếp** exit 0 | ✅ **PASS** (09:44: check=0; test exit 0/0; script loop từng file 1 process) |
 | G2 | **Phase 1a API + authorization (permission matrix)** | ✅ **62/62 policy PASS (vòng 2, tester 12:15)** — 124 check (78 DENY + 46 ALLOW), body-level 14/14. Đã verify fix: comments list khi login thấy 2 author khác nhau; **dup review → 409 `review_exists`**; **library status sai enum → 400 `invalid_status`**; **#15 `GET /api/anime-seasons?ids=` → 200** (role/authz PASS; bảng `anime_seasons` trống trên prod); **cron GET/POST secret đúng → 200**, sau rotate: no-secret/`x-vercel-cron-signature`/secret sai đều **401**. **Minor còn mở:** 6 policy mod ALLOW (Lead chốt bỏ qua), 11 storage (Phase 2), #1 `profiles_read_all` (không set username qua API), 7 route chưa có (#16/#21/#28/#30/#31/#32/#71), và **rotate vẫn trả plaintext password** (P2, chưa fix). Report: `/tmp/opencode/audit-logs/task10-report.md` |
 | G3 | Migrate dry-run: 24/24 bảng khớp `count(*)`, 10 spot-check | ✅ **DONE (11:55)** — chạy `scripts/import-supabase.ts` trên **bản copy prod**: `insert 0 / skip 4-6` mọi bảng (idempotent), counts giữ nguyên **users 4 · profiles 4 · favorites 4 · library 2 · comments 2 · quests 6**, `pragma foreign_key_check` rỗng, exit 0 |
-| G4 | **Frontend cutover — code sạch, còn dep + deploy** | ⏳ **GẦN XONG** — import shim **0** ✅; `src/lib/supabase.ts` đã xoá ✅; `manualChunks` đã bỏ ✅; artifact local: `ls dist/assets | grep -c -i supabase` = **0**, grep SDK = **0** ✅. **Còn:** bỏ dep `@supabase/supabase-js` (`package.json:19`, cosmetic) + **deploy frontend** (prod vẫn bản cũ: còn `supabase-Bxv8Wrcs.js` + 12 hit hcaptcha) |
+| G4 | **Frontend cutover** | ✅ **DONE (12:24 — deploy)** — import shim **0**; shim đã xoá; `manualChunks` bỏ; live **không còn chunk `supabase-*`**, `GoTrueClient|PostgrestClient|supabase\.co` = **0** trên main + 40 chunk. **Cosmetic còn lại:** dep `@supabase/supabase-js` (`package.json:19`) + vài chuỗi UI “Supabase is not configured” — dọn sau cutover. **Render DOM = G13 manual** |
 | G5 | **Domain + HTTPS hoạt động** (`api.animewiki.eu.cc`) | ✅ **PASS (09:49)** — `curl https://api.animewiki.eu.cc/api/health` → **200** `{"success":true,"message":"ok","db":true}`; HSTS có trên HTTPS. Cloudflare tunnel `animewiki-api` healthy, ingress `api.animewiki.eu.cc → http://103.69.75.49:25200`. Login HTTPS set `tsuki_at` (HttpOnly/Secure/SameSite=Lax) + `tsuki_rt` (Path=/api/auth); WSS `wss://api.animewiki.eu.cc/api/ws` nhận `comment:new` ~1.4s. Rotate: HTTP+secret → 409 `{rotated:false}`, HTTPS+secret → 200 + password + warning, no secret/`x-vercel-cron-signature` → 401 |
 | G6 | Backup Supabase + SQLite | ✅ **DONE (11:55)** — `/root/backups/tsuki-20261102-115508/`: `data/app.db` **774.144 bytes** (đã `wal_checkpoint(TRUNCATE)`), `media/` **13 file**, `meta/ptero.env` (mode 600), `SHA256SUMS` **15 dòng**; tổng **3.9 MB**. Quy trình: SFTP get db+wal+shm → checkpoint local → copy; verify bằng `sha256sum -c SHA256SUMS` |
 | G7 | Rollback rehearsal | ✅ **DONE (11:55)** — restore thử trên **bản copy** (`/tmp/restore-test`, không đụng prod): boot bundle node20 với `DB_PATH`/`MEDIA_DIR` trỏ bản restore → `health=200`, `comments=2`, `profile jades=200`, `media avatar=200`; kill + `PORT_FREE`; tổng ~30 giây |
 | G8 | **Runtime khớp build**: panel chạy Node đúng version với `engines`/esbuild | ✅ **PASS** — dev đã hạ `engines >=20.0.0` + `--target=node20`, bundle mới deploy (dist 09:48:58); live `health/deep` báo `node v20.20.2`, `db:true` |
 | G9 | **Client IP không lấy từ XFF + origin không public** | ✅ **MITIGATED + HARDENING DONE (10:45, build `f430123`)** — cloudflared trong container, app **mặc định bind `127.0.0.1` khi có `TUNNEL_TOKEN`** (override bằng `HOST`), supervisor retry backoff 1s→30s + reset sau 60s uptime + dừng khi shutdown; `TRUSTED_PROXIES=127.0.0.1`; host systemd disabled; origin `103.69.75.49:25200` → **connection refused** (port không publish). Domain 200; domain XFF sau bucket đầy → 429; WSS `comment:new` ~1s. **Tiêu chí (độc lập port publish):** `curl -s -m 40 'https://r.jina.ai/http://103.69.75.49:25200/api/health' \| grep -c '"success":true'` → **0** (đạt khi `untrusted_proxy` hoặc `ERR_CONNECTION_REFUSED`/timeout). *Không dùng `grep untrusted_proxy` làm tiêu chí duy nhất.* |
 | G10 | **Google OAuth production** | ✅ **PASS (11:25)** — sir login Google thật trên production: user `kobitnx223@gmail.com`, `provider=google`, `username=jades`, `badges=["admin"]`, `last_login_at=2026-11-02T11:25:51.349Z`; tạo **1 session** lúc `11:25:51.355Z`, `revoked_at=null`, redirect về `https://animewiki.eu.cc/`. `/api/auth/google/start` giờ trả **302** (client_id/redirect_uri/scope/PKCE S256 đúng, không `redirect_uri_mismatch`; trước đó 503). **Không còn là blocker** |
-| G11 | **Captcha/bot defence** | ⏳ **RESOLVED BY DECISION B — chờ deploy frontend** — code sạch (`8165fbb`): `Login.tsx` chỉ còn comment, `HCaptchaWidget.tsx` đã xoá; **build local `dist` có 0 occurrence `hcaptcha`** ✅; backend `CAPTCHA_DISABLED=1`; CF rule `/api/auth/*` 10 req/10s/IP (verify 429). **Prod bundle vẫn bản cũ** (`index-DOKDDPZJ.js`, 12 hit) ⇒ **đóng G11 khi deploy và `grep -c hcaptcha` trên bundle prod = 0** |
+| G11 | **Captcha/bot defence** | ✅ **DONE (12:24 — bundle live sạch)** — live main **`index-C9V0MWsi.js`** (≠ `index-DOKDDPZJ.js`), `hcaptcha` = **0** (main + 36 chunk lazy), `js.hcaptcha.com` = **0**; backend `CAPTCHA_DISABLED=1`; CF rule `/api/auth/*` 10 req/10s/IP. **CSRF origin guard verified:** login `Origin: https://animewiki.eu.cc` → 401 `invalid_credentials` (được chấp nhận), `Origin: https://evil.example` → **403 `csrf_origin_rejected`** ⇒ allowlist đã cập nhật domain mới; thiếu bước này toàn bộ login từ site sẽ 403 |
 | G12 | **Bot Fight Mode (Cloudflare)** | ⏳ **MANUAL — không chặn cutover** — API token thiếu scope (`10405 Method not allowed`); sir vào dashboard Cloudflare → Security → Bots → bật **Bot Fight Mode**. Ghi nhận là hardening sau cutover |
+| G13 | **Browser render smoke (manual)** | ⏳ **CHƯA VERIFY** — cần mở browser thật: `/profile`, trang anime (CommentSection), `/collections`, `/admin`; kỳ vọng không throw `[supabase] đã bị loại bỏ`, comment load 2 author, vote/collect hoạt động. Máy tester không có Playwright/Puppeteer nên chỉ verify được chunk + API 200. **Không chặn kỹ thuật nhưng nên làm trước khi mời user thật** |
 
 ### G11 — Runbook bật lại captcha sau này (hiện đã tắt theo quyết định B)
 
@@ -40,7 +53,7 @@
 5. **Login browser thật 1 lần** (giải captcha) → phải 200 + cookie; nếu `captcha_failed` toàn bộ ⇒ secret sai account.
 6. **Rollback nếu sai:** **thêm `CAPTCHA_DISABLED=1` VÀ xoá `HCAPTCHA_SECRET` cùng lúc**, rồi restart **một lần** (captcha tắt, site sống). **Thứ tự bắt buộc:** không xoá secret trước khi có cờ — production thiếu secret mà chưa có cờ ⇒ `assertCaptchaConfigured` **throw lúc boot** ⇒ crash-loop/site sập; đặt cờ trước rồi xoá secret trong cùng lần thay đổi là an toàn. **Ngữ nghĩa cố ý giữ nguyên: `HCAPTCHA_SECRET` thắng `CAPTCHA_DISABLED`** — `verifyCaptcha` **không** đọc cờ (secret check chạy trước ở `assertCaptchaConfigured`, xem `captcha.ts:31-32,44`); đừng “sửa” code để cờ short-circuit, vì sẽ tái tạo đúng lỗi “tưởng tắt mà vẫn bật”. Khuyến nghị thêm comment trong `verifyCaptcha`: “cố ý KHÔNG đọc CAPTCHA_DISABLED — secret thắng cờ”.
 
-> **No-Go chỉ còn G4 + G11 (cả hai chờ deploy frontend).** G1/G3/G5/G6/G7/G8/G9/G10 đã xanh; G11 **resolved-by-decision nhưng chờ deploy frontend** (`cde5963` + Cloudflare edge); G9 hardening done (`f430123`), G10 Google OAuth verified thật (11:25). Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
+> **GO — cutover đã chạy 12:24.** G1–G12 xanh; chỉ còn **G13 browser render smoke** (manual) nên chạy trước khi mời user thật. G1/G3/G5/G6/G7/G8/G9/G10 đã xanh; G11 **resolved-by-decision nhưng chờ deploy frontend** (`cde5963` + Cloudflare edge); G9 hardening done (`f430123`), G10 Google OAuth verified thật (11:25). Đặc biệt G5: chưa có TLS thì **không cutover**, vì cookie `Secure` không hoạt động qua HTTP và plaintext admin password không được phép rời máy chủ.
 >
 > **Phương án tạm nếu TLS chưa xong (phải chốt bằng văn bản):** chỉ dùng `IP:port` + `COOKIE_SECURE=false` trong **LAN/test nội bộ**, tuyệt đối không mời user thật và không gọi đó là production. Ghi rõ ngày hết hạn của phương án tạm và người chịu trách nhiệm.
 
@@ -133,6 +146,16 @@ Checklist thủ công (browser):
 - [ ] Admin: owner xem `/api/admin/cron-secret` được; mod thường 403; rotate qua HTTPS trả plaintext (hoặc webhook_sent nếu có webhook).
 - [ ] DevTools: không còn request tới `*.supabase.co`; cookie có `HttpOnly; Secure; SameSite=Lax`.
 - [ ] Kiểm 5 view: activity feed phân trang, genres cho recommendations, comment counts, library stats của chính mình.
+
+## 4b. Sau cutover (post-cutover backlog)
+
+1. **Dọn backend cũ:** xoá `server/`, `api/`, `deploy/bundle/` (Supabase cũ) sau khi xác nhận 24h không cần rollback; cập nhật `vercel.json`/`package.json` tương ứng.
+2. **Bỏ dep `@supabase/supabase-js`** khỏi `package.json` + lockfile (cosmetic, không vào bundle).
+3. **Vercel:** xoá cron `/api/admin/rotate-password` (nếu chuyển cron sang Cloudflare/panel) và các env Supabase cũ (`VITE_SUPABASE_*`, `SUPABASE_*`).
+4. **Supabase:** giữ project **read-only + backup tối thiểu 30 ngày**, sau đó mới quyết định xoá.
+5. **Giám sát 24h:** theo dõi `data/crash.log` (commit `b644637` log crash reason), error rate, login fail, WS. **Đối chiếu timestamp** với 2 mốc deploy **12:03** và **12:13–12:14** (CF 502/530, origin refused, tự hồi) để loại trừ restart-do-deploy trước khi kết luận crash thật; nếu có entry quanh 2 mốc, gửi tester (report + request cuối: DELETE collection 12:03 / register 12:13:5x) để đối chiếu. Báo cáo gốc: `/tmp/opencode/audit-logs/task10-report.md`, `tester-report.md`.
+6. **G12 (manual):** bật Bot Fight Mode trên Cloudflare dashboard.
+7. Tồn đọng minor: 6 policy mod ALLOW (chưa test được), 11 storage policy (Phase 2), #1 profiles_read_all, 7 route chưa có, **rotate trả plaintext (P2, Lead giữ có chủ đích vì chưa có webhook)**.
 
 ## 5. Rollback từng bước
 

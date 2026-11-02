@@ -34,8 +34,10 @@
 | `2c510b6` | feat(web+api): migrate collections and personal library pages (G4 còn CommentSection) |
 | `8165fbb` | feat(web+api): remove the last hCaptcha gate, fix 500s found by matrix tests |
 | `b644637` | fix(server): log crash reason before exiting |
+| `c80cb8f` | feat(api): close the last matrix route gaps |
+| `0fb07b3` | chore(web): drop the unused ShieldCheck import left over from the captcha removal |
 
-`main` **ahead `origin/main` 24 commit**, chưa push (mới nhất `b644637`). Tại thời điểm planner kiểm 12:17: repo **sạch** ở `b644637`; `server-v2` check=0, **112/112 test pass**; root check/lint/build = 0; shim=0; local dist 0 hcaptcha; prod bundle vẫn bản cũ. `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
+`main` **đã push** — `origin/main` = HEAD `0fb07b3` (26 commit trên nhánh). **CUTOVER ĐÃ CHẠY 12:24 (2026-11-02)**: commit `0fb07b3` pushed (26 commit), Vercel production READY, live `index-C9V0MWsi.js`, hcaptcha 0, supabase SDK 0, CSRF origin mới OK / origin lạ 403. Sau cutover: xoá `server/`/`api/`/`deploy/bundle`, bỏ dep `@supabase/supabase-js`, xoá cron Vercel + env Supabase, giữ Supabase backup 30 ngày, giám sát `data/crash.log` 24h, G12 manual. Còn **G13 render smoke** (manual). `server-v2` `npm test` **101/101 pass**, `check`=0; root `check`/`lint`/`build`=0.
 
 ## Tổng quan
 
@@ -196,7 +198,7 @@ grep -rn "admin_passwords\|system_secrets" src/routes/ || echo "NO_INTERNAL_ROUT
 - **[P0 → MITIGATED + hardening DONE 10:45, `f430123`] Bypass rate-limit qua XFF/origin:** cloudflared trong container; app tự bind `127.0.0.1` khi có `TUNNEL_TOKEN` (WARNING nếu không loopback), supervisor backoff 1s→30s/reset 60s, `TRUSTED_PROXIES=127.0.0.1`; origin **connection refused** từ ngoài, domain 200, XFF spoof → 429. Fragility IP ISP hết. **Còn nợ docs:** `.env.example` thiếu `HOST`/`TUNNEL_TOKEN` + comment `TRUSTED_PROXIES` còn IP host cũ (dev cập nhật). **Vantage:** tiêu chí `"success":true` count = 0 qua fetcher ngoài, không phải `grep untrusted_proxy`.
 - **[P2] `/api/health/deep`** — đã đóng: trả **401** cả origin lẫn domain (verify 10:01); không còn lộ `dbFile/node/uptimeSec`.
 - **[G11 ✅ RESOLVED BY DECISION B — captcha off + Cloudflare edge]:** frontend xoá gate (`cde5963`), backend `CAPTCHA_DISABLED=1` (secret thắng cờ); CF rule `/api/auth/*` 10 req/10s/IP + mitigation 10s (plan Free), verify live 429. **Deploy frontend còn chờ** — bundle prod vẫn 12 hit hCaptcha; verify 0 sau deploy. **Caveat:** CF yếu hơn app limiter 10/15phút và per-IP ⇒ bot phân tán lọt; **G12 Bot Fight Mode = manual** (scope 10405).
-- **[G11 — code sạch, chờ deploy] Captcha ở `/login` đã dọn:** `HCaptchaWidget.tsx` đã xoá, `Login.tsx` chỉ còn comment; `vite-env.d.ts`/`i18n.ts`/`.env.example` đã dọn; **build local `dist` = 0 occurrence hcaptcha**. Còn **deploy frontend**; đóng khi bundle prod `grep -c hcaptcha` = **0**.
+- **[G11 ✅ PASS — FE đã redeploy 12:24] Captcha ở `/login` đã dọn:** `HCaptchaWidget.tsx` đã xoá, `Login.tsx` chỉ còn comment; `vite-env.d.ts`/`i18n.ts`/`.env.example` đã dọn; **build local `dist` main `index-C3guZ9vh.js` = 0 occurrence hcaptcha**. **Live đã đổi main → `index-C9V0MWsi.js`, hcaptcha = 0, `js.hcaptcha.com` = 0, 5 entry chunk đều 0** ⇒ G11 đóng.
 - **[G12 — manual] Bot Fight Mode Cloudflare:** API token thiếu scope (`10405`); sir bật dashboard Security → Bots. Không chặn cutover.
 - **[G10 ✅ PASS 11:25] Google OAuth production:** sir login Google thật; DB có user `kobitnx223@gmail.com` (provider=google, username=jades, badges=["admin"]), `last_login_at=2026-11-02T11:25:51.349Z`, 1 session tạo 11:25:51.355Z, `revoked_at=null`; `/api/auth/google/start` → **302** đúng (trước là 503). Không còn blocker/không còn là quyết định sản phẩm.
 
@@ -235,7 +237,7 @@ node --test test/ws-client.test.ts    # dùng package `ws` (Phase 2 được duy
 1. `scripts/migrate-supabase.mjs`: đọc Supabase **read-only** (service role, `--dry-run` mặc định), xuất JSON snapshot; import vào SQLite theo thứ tự FK; `--apply` mới ghi; idempotent (`UPSERT` theo PK).
 2. Mapping kiểu: uuid→TEXT, timestamptz→ISO UTC, jsonb/text[]→JSON text, boolean→0/1; `auth.users` → `users` (giữ `id`, email; password Supabase không migrate được → user phải reset mật khẩu hoặc dùng Google).
 3. Kiểm chứng: script so sánh `count(*)` từng bảng (Supabase vs SQLite), checksum 3 cột định danh, báo cáo lệch. **G3 DONE (11:55)** trên bản copy: `insert 0/skip 4-6`, counts `users 4 · profiles 4 · favorites 4 · library 2 · comments 2 · quests 6`, FK check rỗng, exit 0.
-4. Cutover frontend: **0 file import shim** ✅ — cả 8 trang đã migrate. **Đã dọn:** xoá `src/lib/supabase.ts`, bỏ `manualChunks` (`vite.config.ts`), artifact local sạch (`ls dist/assets | grep -c -i supabase` = 0; grep SDK = 0). **Còn:** bỏ dep `@supabase/supabase-js` (`package.json:19`, cosmetic) + deploy frontend.
+4. Cutover frontend: **0 file import shim** ✅; đã xoá shim + bỏ `manualChunks`; **live bundle sạch chunk `supabase-*` và SDK symbols = 0** ✅. **Còn cosmetic:** bỏ dep `@supabase/supabase-js` (`package.json:19`) + vài chuỗi UI “Supabase is not configured”; **render DOM chưa verify** (G13 manual).
 5. **Gỡ Supabase phía server** (2 file còn lại): `server/lib/translate.ts`, `server/routes/admin.ts` (đã port ở Phase 1), `server/lib/`/`server/routes/` còn lại, `api/index.ts`, `scripts/prerender.ts`, `vercel.json` — quyết định xoá `server/`+`api/` hay trỏ Vercel sang `server-v2`. Kiểm: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng.
 6. Feature flag `VITE_BACKEND=supabase|v2` để rollback tức thời; runbook cutover + rollback trong `docs/migration/CUTOVER.md`.
 7. Backup: copy `data/app.db` + WAL trước mỗi lần import; giữ bản Supabase read-only ít nhất 30 ngày.
@@ -247,7 +249,7 @@ node --test test/ws-client.test.ts    # dùng package `ws` (Phase 2 được duy
 - [ ] Sau `--apply`: `count(*)` 24/24 bảng khớp Supabase (ghi rõ số từng bảng vào log).
 - [ ] 10 spot-check ngẫu nhiên (id, created_at, quan hệ FK) khớp.
 - [ ] Frontend: `grep -rln "lib/supabase" src/ | grep -v "src/lib/supabase.ts" | wc -l` → **0** (hiện **0**) ✅; xoá `src/lib/supabase.ts`; bỏ dep `@supabase/supabase-js`; bỏ `manualChunks` entry `'supabase'`; `wc -c dist/assets/supabase-*.js` ≈ **0 byte** (chunk rỗng vẫn tồn tại — không dùng “0 file”); `grep -l "GoTrueClient\|PostgrestClient\|supabase.co" dist/assets/*.js` → rỗng.
-- [ ] Runtime: mở **Profile**, **CommentSection**, **CollectionsPage**, **AdminDashboard**, **ActivityFeed** — không còn throw `[supabase] đã bị loại bỏ`.
+- [ ] Runtime: mở **Profile**, **CommentSection**, **CollectionsPage**, **AdminDashboard**, **ActivityFeed** — không còn throw `[supabase] đã bị loại bỏ`. **Hiện trạng 12:22:** chunk+API các trang trả 200 nhưng **DOM chưa verify** (không có browser/Playwright trên máy tester) — cần Lead mở browser hoặc duyệt cài Playwright.
 - [ ] Server: `grep -rln "supabase\|SUPABASE" server/ api/ scripts/ --include=*.ts` → rỗng (2 file hiện có: `server/routes/admin.ts`, `server/lib/translate.ts`).
 - [ ] Rollback: bật `VITE_BACKEND=supabase` → app cũ chạy lại; đã thử 1 lần và ghi log.
 - [ ] `npm run check`, `npm run lint`, `npm run build` ở root → exit 0.
@@ -265,6 +267,15 @@ npm run check && npm run lint && npm run build
 ```
 
 ---
+
+### Phase 3b — Sau cutover
+
+- [ ] Xoá backend cũ `server/`, `api/`, `deploy/bundle/` + cập nhật `vercel.json`/`package.json`.
+- [ ] Bỏ dep `@supabase/supabase-js` + lockfile; dọn chuỗi UI “Supabase is not configured”.
+- [ ] Xoá cron Vercel `/api/admin/rotate-password` + env Supabase trên Vercel.
+- [ ] Supabase read-only + backup 30 ngày trước khi xoá project.
+- [ ] Giám sát 24h `data/crash.log`, error rate, login fail, WS; **đối chiếu timestamp với 2 blip deploy 12:03 và 12:13–12:14** để loại trừ restart-do-deploy trước khi kết luận crash (gửi tester nếu có entry).
+- [ ] G12 Bot Fight Mode (manual, sir) + G13 browser render smoke.
 
 ## Thứ tự giao việc & gate
 
