@@ -71,12 +71,39 @@ async function fetchSummary(slug: string, lang: 'vi' | 'en'): Promise<any | null
   return null
 }
 
+/**
+ * Wikimedia retired `/api/rest_v1/page/mobile-sections` (now 403 for every UA),
+ * which broke the wiki importer. Use the Action API instead: one call for the
+ * section list, then one text call per top-level section (cached 24h).
+ */
 async function fetchSections(slug: string, lang: 'vi' | 'en'): Promise<any | null> {
   const tryLangs: Array<'vi' | 'en'> = lang === 'vi' ? ['vi', 'en'] : ['en']
   for (const l of tryLangs) {
-    const url = `https://${l}.wikipedia.org/api/rest_v1/page/mobile-sections/${encodeURIComponent(slug)}`
-    const data = await fetchJson(url)
-    if (data) return { ...data, _resolvedLang: l }
+    const base = `https://${l}.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(slug)}&format=json&formatversion=2&redirects=1&disableeditsection=1`
+    const list = (await fetchJson(`${base}&prop=sections`)) as any
+    if (!list?.parse?.sections) continue
+
+    const lead = (await fetchJson(`${base}&prop=text&section=0`)) as any
+    const sections = (list.parse.sections as any[])
+      .filter((s) => Number(s.level) <= 2 && String(s.index) !== '0')
+      .slice(0, 8)
+
+    const withText: any[] = []
+    for (const s of sections) {
+      const body = (await fetchJson(`${base}&prop=text&section=${s.index}`)) as any
+      withText.push({
+        id: Number(s.index),
+        line: s.line,
+        toclevel: Number(s.level),
+        text: body?.parse?.text ?? '',
+      })
+    }
+
+    return {
+      lead: { sections: [{ text: lead?.parse?.text ?? '' }] },
+      remaining: { sections: withText },
+      _resolvedLang: l,
+    }
   }
   return null
 }
