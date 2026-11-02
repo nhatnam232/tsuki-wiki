@@ -191,7 +191,7 @@ export function createAuthRouter(db: Db, options: AuthRouterOptions = {}): Route
   };
 
   router.post('/register', credentialsLimiter('auth:register'), register);
-  router.post('/signup', credentialsLimiter('auth:signup'), register); // alias theo task-6
+  router.post('/signup', credentialsLimiter('auth:register'), register); // alias: share the bucket so the pair cannot double the quota
 
   // ── Login ───────────────────────────────────────────────────
   router.post('/login', credentialsLimiter('auth:login'), (req: Request, res: Response) => {

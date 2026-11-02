@@ -249,17 +249,29 @@ export function upsertGoogleUser(
         .get(email) as { id: string; password_hash: string | null; email_verified: number } | undefined;
 
       if (byEmail) {
-        // Không chiếm tài khoản email+password chưa verify (kẻ tấn công có thể
-        // đăng ký trước bằng email của nạn nhân).
-        if (byEmail.password_hash && byEmail.email_verified !== 1) {
-          throw Object.assign(new Error('account_unverified_conflict'), {
-            code: 'account_unverified_conflict',
-          });
-        }
+        // Account squatting defence: an attacker can pre-register someone
+        // else's address (email_verified stays 0 and there is no reset flow),
+        // which used to return 409 forever and lock the real owner out.
+        // Google has just proven ownership of this address, so Google wins:
+        // the squatter's password is dropped and the account is marked
+        // verified. No user data is exposed to the Google user beyond their
+        // own profile row, and the squatter loses access.
+        const squatted = Boolean(byEmail.password_hash) && byEmail.email_verified !== 1;
         userId = byEmail.id;
         db.prepare(
-          'update users set google_sub = ?, email_verified = 1, name = coalesce(?, name), picture = coalesce(?, picture), last_login_at = ?, updated_at = ? where id = ?'
+          squatted
+            ? `update users set google_sub = ?, provider = 'google', email_verified = 1,
+                 password_hash = null, password_updated_at = null,
+                 name = coalesce(?, name), picture = coalesce(?, picture),
+                 last_login_at = ?, updated_at = ? where id = ?`
+            : 'update users set google_sub = ?, email_verified = 1, name = coalesce(?, name), picture = coalesce(?, picture), last_login_at = ?, updated_at = ? where id = ?'
         ).run(sub, claims.name ?? null, claims.picture ?? null, now, now, userId);
+        if (squatted) {
+          db.prepare(
+            `insert into audit_logs (actor_id, action, target_type, target_id, reason, created_at)
+             values (?, 'other', 'users', ?, 'google_takeover_unverified', ?)`
+          ).run(userId, userId, now);
+        }
       } else {
         const inserted = db
           .prepare(

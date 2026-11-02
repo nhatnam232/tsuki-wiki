@@ -266,15 +266,16 @@ test('oauth callback: state sai → 400 invalid_oauth_state (chống CSRF)', asy
   }
 });
 
-test('oauth callback: tài khoản password chưa verify cùng email → 409, không chiếm tài khoản', async () => {
+test('oauth callback: email đã bị squat chưa verify → Google thắng, mật khẩu kẻ găm bị xoá', async () => {
   const h = await startHarness();
   try {
-    // đăng ký bằng password trước → email_verified = 0
-    await fetch(`${h.base}/api/auth/register`, {
+    // Kẻ tấn công đăng ký trước bằng email của nạn nhân → email_verified = 0
+    const squat = await fetch(`${h.base}/api/auth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'victim@example.com', password: 'S3cret-password!' }),
     });
+    assert.equal(squat.status, 201);
 
     const state: StubState = {
       idToken: makeIdToken({ sub: 'g-sub-5', email: 'victim@example.com', email_verified: true }),
@@ -287,14 +288,34 @@ test('oauth callback: tài khoản password chưa verify cùng email → 409, kh
         `${h.base}/api/auth/google/callback?code=fake&state=${encodeURIComponent(flow.state)}`,
         { redirect: 'manual', headers: { cookie: flow.stateCookie } }
       );
-      assert.equal(res.status, 409);
-      const body = (await res.json()) as { error: string };
-      assert.equal(body.error, 'account_unverified_conflict');
+      // Google đã chứng minh quyền sở hữu email ⇒ đăng nhập thành công, không 409
+      assert.equal(res.status, 302);
 
       const row = h.db
-        .prepare('select google_sub from users where email = ?')
-        .get('victim@example.com') as { google_sub: string | null };
-      assert.equal(row.google_sub, null, 'không được gắn google_sub vào tài khoản chưa verify');
+        .prepare('select google_sub, email_verified, password_hash, provider from users where email = ?')
+        .get('victim@example.com') as {
+        google_sub: string | null;
+        email_verified: number;
+        password_hash: string | null;
+        provider: string | null;
+      };
+      assert.equal(row.google_sub, 'g-sub-5', 'phải gắn google_sub');
+      assert.equal(row.email_verified, 1, 'Google đã verify email');
+      assert.equal(row.password_hash, null, 'mật khẩu của kẻ squat phải bị xoá');
+      assert.equal(row.provider, 'google');
+
+      const audit = h.db
+        .prepare("select count(*) c from audit_logs where reason = 'google_takeover_unverified'")
+        .get() as { c: number };
+      assert.equal(audit.c, 1, 'phải ghi audit takeover');
+
+      // mật khẩu cũ không còn đăng nhập được
+      const login = await fetch(`${h.base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'victim@example.com', password: 'S3cret-password!' }),
+      });
+      assert.equal(login.status, 401, 'mật khẩu kẻ squat phải chết');
     } finally {
       restore();
     }
