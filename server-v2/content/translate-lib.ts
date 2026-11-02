@@ -135,6 +135,25 @@ async function translateViaLibreTranslate(
 }
 
 
+/** Run an async mapper with bounded concurrency, preserving input order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R | null>,
+): Promise<Array<R | null>> {
+  const results: Array<R | null> = new Array(items.length).fill(null)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const index = cursor++
+      if (index >= items.length) return
+      results[index] = await fn(items[index])
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 /**
  * Split text into <=450-character chunks on sentence/word boundaries
  * (MyMemory's anonymous endpoint rejects longer payloads).
@@ -211,20 +230,18 @@ export async function translateText(
   // sentence boundaries and translated chunk by chunk. Without this every
   // wikipedia section (>500 chars) silently failed to translate.
   const chunks = splitForMyMemory(normalized)
-  const parts: string[] = []
-  for (const chunk of chunks) {
-    const part = await translateViaMyMemory(chunk, targetLang)
-    if (!part) {
-      // Partial success is still useful, but report it as unavailable so the
-      // client does not mistake English text for a translation.
-      if (parts.length === 0) {
-        return { available: false, reason: 'Tất cả dịch vụ dịch thuật hiện không khả dụng.' }
-      }
-      break
-    }
-    parts.push(part)
+  // Small concurrency: MyMemory throttles anonymous callers, but sequential
+  // chunk translation made a long wiki section take ~60s.
+  const parts = await mapWithConcurrency(chunks, 3, (chunk) =>
+    translateViaMyMemory(chunk, targetLang)
+  )
+  if (parts[0] === null) {
+    return { available: false, reason: 'Tất cả dịch vụ dịch thuật hiện không khả dụng.' }
   }
-  const joined = parts.join(' ')
+  const ok = parts.filter((p): p is string => Boolean(p))
+  // A partially translated text is still returned, but callers can detect the
+  // gap: the untranslated chunks keep their source text.
+  const joined = ok.join(' ')
   await saveCachedTranslation(hash, normalized, joined, targetLang, 'mymemory')
   return { translatedText: joined, available: true }
 }
