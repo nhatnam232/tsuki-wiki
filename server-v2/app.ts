@@ -7,6 +7,7 @@
  * Thứ tự middleware: security headers → CORS whitelist → JSON body → routes →
  * 404 JSON → error handler.
  */
+import { readFileSync } from 'node:fs';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import type { Db } from './db/index';
@@ -53,19 +54,36 @@ export function createApp(deps: AppDeps = {}): express.Express {
   app.use(express.json({ limit: '100kb' }));
 
   // Health: 200 + {success:true, message:'ok', db:true} khi `select 1` chạy được.
+  // `build` is injected by the build script so a deploy can be identified from
+  // outside (there is no other way to tell which commit a container runs).
+  const BUILD = (() => {
+    if (process.env.BUILD_SHA) return process.env.BUILD_SHA;
+    try {
+      return readFileSync(process.env.BUILD_FILE ?? './build.txt', 'utf8').trim() || 'dev';
+    } catch {
+      return 'dev';
+    }
+  })();
   app.get('/api/health', (_req: Request, res: Response) => {
     if (!checkDb) {
-      res.status(200).json({ success: true, message: 'ok', db: false });
+      res.status(200).json({ success: true, message: 'ok', db: false, build: BUILD });
       return;
     }
     try {
       const ok = ping(db);
-      res.status(ok ? 200 : 503).json({ success: ok, message: ok ? 'ok' : 'db_unavailable', db: ok });
+      res.status(ok ? 200 : 503).json({
+        success: ok,
+        message: ok ? 'ok' : 'db_unavailable',
+        db: ok,
+        build: BUILD,
+        uptimeSec: Math.round(process.uptime()),
+      });
     } catch (err) {
       res.status(503).json({
         success: false,
         message: 'db_unavailable',
         db: false,
+        build: BUILD,
         error: err instanceof Error ? err.message : String(err),
       });
     }
